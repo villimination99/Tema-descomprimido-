@@ -160,10 +160,13 @@ Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 seman
                 ┌──────────────── DIRECCIÓN (orquestador Claude) ─────────────────┐
                 │ briefing · prioriza · explica en español · nunca envía órdenes  │
                 └──────────────────────────────────────────────────────────────────┘
- ┌─────────┐   ┌───────────┐   ┌────────────┐   ┌───────────┐   ┌──────────┐   ┌───────────┐
- │1 DATOS  │──▶│2 ANÁLISIS │──▶│4 ESTRATEGIA│──▶│5 SIMULAC. │──▶│6 RIESGO  │──▶│7 EJECUCIÓN│──▶ MEXC
- └─────────┘   │  TÉCNICO  │   └────────────┘   └───────────┘   │ (VETO)   │   └───────────┘
-      │        └───────────┘         ▲  ▲                       └──────────┘         │
+ ┌─────────┐   ┌───────────┐   ┌────────────┐   ┌────────────┐   ┌──────────┐   ┌───────────┐
+ │1 DATOS  │──▶│2 ANÁLISIS │──▶│4 ESTRATEGIA│──▶│5 SIMULACIÓN│──▶│6 RIESGO  │──▶│7 EJECUCIÓN│──▶ MEXC
+ └─────────┘   │  TÉCNICO  │   └────────────┘   └────────────┘   │ (VETO)   │◀─┐└───────────┘
+      │        └───────────┘         ▲  ▲       ┌────────────┐   └──────────┘  │      │ fill
+      │                              │  │       │5b ESCENARIOS│◀────────────────┼──────┘
+      │                              │  │       │ en posición │─────────────────┘ (gestiona vía Riesgo)
+      │                              │  │       └────────────┘
       │        ┌───────────┐         │  └── TradingView webhook (receptor §11)        ▼
       └───────▶│3 CONTEXTO │─────────┘                                       ┌──────────────┐
                └───────────┘                                                 │8 MONITOREO   │
@@ -173,7 +176,7 @@ Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 seman
 ```
 
 **Principios de arquitectura**
-- **Event-driven:** un bus interno de eventos (`MarketEvent`, `SignalEvent`, `SetupEvent`, `RiskDecision`, `OrderEvent`, `FillEvent`, `AlertEvent`). **El mismo código** corre en backtest, papel y vivo; solo cambia la fuente de datos y el adaptador de ejecución.
+- **Event-driven:** un bus interno de eventos (`MarketEvent`, `SignalEvent`, `SetupEvent`, `RiskDecision`, `OrderEvent`, `FillEvent`, `ScenarioEvent`, `ManageEvent`, `AlertEvent`). **El mismo código** corre en backtest, papel y vivo; solo cambia la fuente de datos y el adaptador de ejecución.
 - **Separación de poderes:** solo el Dept. 7 habla con la API de órdenes, y solo con un `RiskDecision=PASS` firmado (hash del ticket + caducidad de 60 s).
 - **Todo se registra:** cada evento se escribe en el diario antes de producir efectos.
 - **Configuración declarativa:** estrategias, riesgo y modos en YAML versionado. Cambiar un límite queda en git.
@@ -218,13 +221,20 @@ Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 seman
 - Cada estrategia es una clase con `on_bar(features, context) → Setup | None` y una ficha YAML: `id`, hipótesis, temporalidades, regímenes permitidos, modos permitidos, parámetros, estado en el embudo (G0–G8).
 - **Setup** = dirección, tipo de entrada (límite/stop), precio de entrada, stop, objetivos (TP1/TP2), invalidación, caducidad, calidad (A+/A/B), razón en texto.
 - **Calidad del setup** *(decisión de Claude)*: A+ = alineación 3/3 + régimen permitido + contexto sin banderas en contra + R:R ≥ 2. A = alineación ≥ 2/3 y R:R ≥ 1,5. B = el resto, que **nunca** se opera en vivo.
-- **Candidatas iniciales** (hipótesis, no promesas):
-  1. Seguimiento de tendencia multi-timeframe (EMA + estructura + stop por ATR).
-  2. Ruptura de rango de sesión con confirmación de volumen/CVD (sesiones Asia 00–08, Europa 07–16, EE. UU. 13:30–20 UTC).
-  3. Reversión a VWAP/Bollinger, solo en régimen RANGO.
-  4. Squeeze por funding extremo + OI en aumento + rotura.
-  5. Salida de COMPRESIÓN hacia EXPANSIÓN.
-  6. Señales de TradingView del dueño, tratadas como una estrategia más que pasa el embudo.
+- **Cartera de estrategias** *(decisión de Claude por delegación del dueño; todas son hipótesis que deben pasar el embudo)*:
+
+| ID | Estrategia | Marcos (dirección / setup / entrada) | Régimen | Idea | Stop | Salida base |
+|---|---|---|---|---|---|---|
+| **S1** | Retroceso en tendencia MTF (núcleo) | 4h / 1h / 15m | TENDENCIA | Entrar a favor de la tendencia mayor en el retroceso a EMA21/zona de demanda con vela de rechazo | Bajo el mínimo del retroceso − 0,25 ATR | TP1 1,5R; runner con trailing por estructura |
+| **S2** | Ruptura de sesión | 1h / 15m / 5m | COMPRESIÓN → EXPANSIÓN | Rango de Asia (00–07 UTC) roto en la apertura de Europa o EE. UU. con volumen > 1,5× y CVD a favor | Mitad del rango | TP1 1R; runner hasta 3R o fin de sesión |
+| **S3** | Squeeze de volatilidad | 4h / 1h / 15m | COMPRESIÓN | Bollinger dentro de Keltner ≥ N velas; entrar en la primera vela de expansión a favor del marco mayor | Lado opuesto del squeeze | Trailing por ATR desde el inicio |
+| **S4** | Squeeze por funding/OI | 1h / 15m / 5m | Cualquiera menos CAOS | Funding en percentil extremo + OI subiendo + rotura **contra** la masa posicionada | Más allá del extremo previo | Rápida: TP1 1R, TP2 2,5R |
+| **S5** | Barrido de liquidez | 1h / 15m / 5m | RANGO o TENDENCIA | Barrido de un máximo/mínimo de sesión o día seguido de CHoCH en 5m | Más allá de la mecha del barrido | TP1 en el lado opuesto del rango; runner |
+| **S6** | Reversión a VWAP (scalping maker) | 15m / 5m / 1m | RANGO | Desviación ≥ 2σ del VWAP de sesión con agotamiento; solo órdenes maker | 3σ | VWAP; sin runner |
+| **S7** *(fase posterior)* | Order flow: absorción y divergencia de CVD | 15m / 5m / 1m | Cualquiera | Precio hace un nuevo extremo y CVD no; absorción en el libro | Más allá del extremo | Por definir tras ≥ 3 meses de datos grabados |
+| **TV** | Señales TradingView del dueño | Según el script | Según la ficha | Entran como setups y pasan Simulación y Riesgo | Las del script | Política del motor de escenarios |
+
+- **Asignador por régimen (meta-estrategia):** cada régimen activa solo las estrategias compatibles. Si dos estrategias dan señal en el mismo símbolo, se queda la de mayor R esperado según la simulación. La exposición correlacionada se limita a nivel de cartera (§9.4).
 
 ### Dept. 5 — Simulación
 - **Backtest event-driven** con el mismo código que en vivo:
@@ -242,6 +252,50 @@ Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 seman
 - **Monte Carlo:** (a) remuestreo de la secuencia de operaciones (10 000 caminos) para la distribución del drawdown y de la ruina; (b) bootstrap por bloques de velas para el abanico de caminos de precio de un setup concreto: P(objetivo primero), P(stop primero), P(ninguno al caducar).
 - **Estrés:** −20 % en 1 h; gap de 3 % a través del stop; funding 10× el normal durante 3 días; API caída 15 min con posición abierta; spread 10×.
 - **Salida:** `SimReport` (métricas, intervalos de confianza, gráficos y veredicto por puerta).
+
+### Dept. 5b — Motor de escenarios en posición ("sala de guerra")
+**Requisito del dueño:** en cuanto se ejecuta una orden, se generan **todos los escenarios posibles** para gestionar la operación con la máxima efectividad.
+
+**Disparo y tiempos:**
+- Se activa con cada `FillEvent` de entrada, usando el precio real de ejecución.
+- **Vía rápida (< 1 s):** escenarios precalculados durante la evaluación del setup, reajustados al precio real.
+- **Vía completa (< 5 s):** recálculo entero.
+- **Actualización** en cada vela cerrada de la temporalidad de entrada y ante eventos: precio cruza un nivel clave, pico de OI, ventana macro, hora de funding, ejecución parcial.
+
+**Cuatro generadores combinados:**
+1. **Análogos históricos:** búsqueda k-NN de las N (≥ 500) situaciones pasadas más parecidas (régimen, alineación multi-timeframe, ATR, funding, OI, sesión, distancia a niveles) y sus caminos de precio reales posteriores.
+2. **Bootstrap por bloques** de los rendimientos recientes, condicionado al régimen actual.
+3. **Modelo paramétrico con saltos:** volatilidad actual más saltos calibrados con las mechas históricas del par.
+4. **Escenarios de evento deterministas:** ventana macro, cobro de funding, cascada de liquidaciones hacia los clústeres cercanos, gap del 3 %, API caída.
+
+En total 10 000 caminos o más, ponderados por la calidad histórica de cada generador (se mide en el diario).
+
+**Seis escenarios canónicos**, cada uno con probabilidad, camino típico, MFE/MAE esperados y tiempo esperado:
+
+| Escenario | Señal que lo confirma en vivo | Jugada pre-planificada |
+|---|---|---|
+| 🚀 Continuación fuerte | Rompe TP1 rápido, CVD a favor, estructura intacta | Trailing por estructura/ATR; **piramidar con la bolsa de ganancias** (stop en BE, riesgo total ≤ R inicial) |
+| 📈 Continuación lenta | Avanza sin impulso | Parcial en TP1, stop a BE + costes, runner con trailing amplio |
+| ↩️ Retroceso sano | Vuelve a la zona de entrada sin romper la invalidación | Mantener; **no mover el stop**; no añadir |
+| ➖ Rango / estancamiento | No llega a +0,5R en N velas | **Stop por tiempo:** salir cerca de 0R en lugar de esperar al stop |
+| ❌ Reversión | CHoCH en contra, CVD girando, régimen cambia | **Salida anticipada** antes del stop (pérdida < 1R) |
+| ⚡ Evento extremo | Mecha > 3 ATR, cascada de liquidaciones, ventana macro | El stop del exchange protege; antes de un evento programado se reduce o se cierra la posición |
+
+**Selección de la política de salida óptima:**
+- Para cada operación se evalúan sobre los caminos simulados unas 50 combinaciones de salida: % en TP1, distancia de TP1, tipo y distancia del trailing, stop por tiempo, mover a BE sí/no.
+- Se elige la que **maximiza el R esperado** con estas condiciones: P(pérdida > 1R) = 0, garantizado por el stop; y percentil 5 del resultado ≥ el de la política por defecto de la estrategia.
+- **Nunca se elige una política solo porque "suene mejor":** cada estrategia valida en backtest (G1–G3) que la selección dinámica supera a su política fija. Si no la supera, usa la fija.
+
+**Reglas duras del motor (no negociables):**
+- Solo puede **reducir** riesgo: mover el stop a favor, salidas parciales, cierre anticipado.
+- **Nunca aleja el stop** ni añade riesgo por encima del R inicial.
+- Las piramidaciones solo con la bolsa de ganancias, en modo Ataque/Turbo y con el stop de toda la posición en BE.
+- Todas sus acciones pasan por Riesgo como un setup más (`ManageEvent → RiskDecision`).
+
+**Salidas:**
+- Telegram: "Operación abierta: escenarios 🚀 22 % · 📈 25 % · ↩️ 18 % · ➖ 15 % · ❌ 17 % · ⚡ 3 %; R esperado +0,6; política elegida …".
+- Panel: abanico de caminos y escenarios dibujados sobre el gráfico.
+- Diario: escenario previsto frente a escenario ocurrido, para mejorar los pesos de los generadores.
 
 ### Dept. 6 — Riesgo (con veto)
 Se detalla en §9. Es la única autoridad que emite `PASS`/`BLOCK` y fija el tamaño. Su configuración (`config/risk.yaml`) solo la cambia el dueño. Un hook de Claude impide editarla sin confirmación (§12).
@@ -291,6 +345,9 @@ Setup       {setup_id, strategy_id, symbol, side, entry_type, entry, stop, tp[],
 SimReport   {setup_id|strategy_id, p_target_first, p_stop_first, p_none, exp_R, ci95_exp_R, ...}
 RiskDecision{setup_id, verdict: PASS|BLOCK, reasons[], mode, risk_usdt, qty, leverage,
              margin_bucket: base|ataque, liq_price, ticket_hash, valid_until}
+ScenarioRep {position_id, ts, n_paths, scenarios[{name, prob, mfe_R, mae_R, eta}], exp_R,
+             chosen_exit_policy, generator_weights}
+ManageAction{position_id, action: move_stop|partial|close|add, params, reason, scenario}
 Order       {client_order_id, ticket_hash, symbol, side, type, price, qty, reduce_only, post_only}
 Fill        {client_order_id, exch_order_id, ts, price, qty, fee, fee_asset}
 ```
@@ -376,6 +433,13 @@ Regla: |entrada − stop| ≤ 0,5 × |entrada − liq|   (el stop debe saltar mu
 - **Bloqueo de beneficios intradía:** si el día va en +2 % del capital protegido, el riesgo de las siguientes operaciones del día se reduce a la mitad. Si después se devuelve la mitad de esa ganancia, se para el día.
 - **Exposición:** máximo 3 posiciones abiertas; exposición correlacionada (correlación de 1h a 30 días > 0,7) que cuenta como una sola posición a efectos de riesgo; nocional total ≤ 10× el capital total.
 - **Sin promediar a la baja:** nunca se añade a una posición perdedora. Piramidación solo en Ataque, con el stop ya en break-even y el riesgo total de la posición ≤ el riesgo inicial.
+
+### 9.4b Elegir las pérdidas, priorizar las ganancias (asimetría)
+Principio del dueño: **las pérdidas se eligen de antemano, las ganancias se dejan correr.**
+- **Pérdida elegida:** cada operación nace con su pérdida máxima fijada (1R = stop en el exchange) y una salida anticipada si el escenario ❌ se confirma. La pérdida media realizada objetivo es ≤ 0,8R.
+- **Ganancia sin techo fijo:** por defecto ≥ 50 % de la posición queda como *runner* con trailing por estructura/ATR, en régimen de tendencia o expansión. La relación mínima R:R planificada es 1,5 (A) o 2 (A+).
+- **Piramidación de ganadoras** con la bolsa de ganancias (§9.4), nunca promediar perdedoras.
+- **Medición:** el informe semanal mide la asimetría real (ganancia media / pérdida media, MFE capturado, MAE soportado) y alerta si las pérdidas medias superan 1R (señal de slippage o de stops mal ejecutados).
 
 ### 9.5 Modos de riesgo (máquina de estados)
 
@@ -601,17 +665,27 @@ Cada fase termina con: tests en verde, demostración en vivo al dueño y su apro
 
 ---
 
-## 19. Preguntas abiertas para el dueño (antes de la Fase 0)
-1. **Suelo del capital:** propuesta 450 USDT (−10 %) → HALT. ¿Lo confirmas, o lo quieres más estricto (p. ej. −5 %)? Más estricto = se para antes, y con más frecuencia en semanas malas normales.
-2. **Ganancias:** del 50 % que no va a la bolsa de ataque, ¿se queda en el capital protegido (crece el interés compuesto) o se retira?
-3. **Mercado:** ¿futuros perpetuos, spot o ambos? ¿Apalancamiento máximo absoluto que aceptas (propuesta: 20x solo en Turbo)?
-4. **Autonomía final:** ¿hasta L2 (copiloto) o L3 (automático)?
-5. **Pares:** ¿solo BTC/ETH, el top 10 o un universo más amplio?
-6. **Estilo:** el objetivo pide scalping/intradía activo; ¿cuántas horas al día podrás mirar Telegram para confirmar en L2?
-7. **TradingView:** ¿qué plan tienes? ¿Tienes indicadores o estrategias Pine propias que integrar?
-8. **Mac:** ¿modelo? ¿Puede estar encendido 24/7? ¿Aceptas VPS desde la Fase 4?
-9. **País de residencia y zona horaria** (acceso a MEXC y horario de los informes).
-10. **Trinquete:** las ganancias que pasan del bucket de ataque, ¿a la base o retiradas fuera de MEXC?
+## 18b. Decisiones cerradas (2026-10-23)
+El dueño delegó en Claude el diseño del sistema y de las estrategias ("como veas mejor"). Quedan fijadas:
+
+| Tema | Decisión |
+|---|---|
+| Prioridad | No perder el capital (§1b) > consistencia > objetivo de rendimiento |
+| Suelo | 450 USDT (−10 %) → HALT total |
+| Ganancias semanales | 50 % a la bolsa de ganancias (modo agresivo), 50 % se queda en el capital protegido (interés compuesto); el dueño puede retirar cuando quiera |
+| Mercado | Futuros perpetuos USDT-M (permiten cortos), margen aislado; spot como respaldo con la excepción de §10 |
+| Apalancamiento | ≤ 3x en el capital protegido; ≤ 10x (Ataque) y ≤ 20x (Turbo) solo en la bolsa de ganancias |
+| Autonomía | L2 (confirmación por ticket) desde la F4; L3 solo para estrategias en G8 |
+| Universo | BTC y ETH + hasta 8 pares líquidos del top 20 (§6, Dept. 1) |
+| Estrategias | Cartera S1–S7 + TV (§6, Dept. 4) |
+| Gestión en posición | Motor de escenarios (§6, Dept. 5b) + asimetría (§9.4b) |
+
+## 19. Preguntas abiertas para el dueño (logística; no bloquean el diseño)
+Se responden en la Fase 0, en el Mac:
+1. **Mac:** ¿modelo? ¿Puede estar encendido 24/7 hasta la Fase 4?
+2. **TradingView:** ¿qué plan tienes? ¿Tienes indicadores o estrategias Pine propias que integrar?
+3. **País de residencia y zona horaria:** acceso a MEXC y sus futuros, y horario de los informes.
+4. **Disponibilidad en L2:** ¿en qué franjas horarias podrás confirmar tickets por Telegram? Fuera de ellas, el sistema solo opera en papel o no opera.
 
 ---
 
