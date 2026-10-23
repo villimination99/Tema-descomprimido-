@@ -1,332 +1,612 @@
-# Sistema de Trading MEXC + TradingView — Diseño y Plan Maestro
+# Sistema de Trading MEXC + TradingView — Diseño y Plan Maestro (v2)
 
-> Estado: **BORRADOR PARA APROBACIÓN.** No se ha construido nada. La ejecución empieza cuando el repo esté en el Mac y el dueño apruebe este documento.
-> Fecha: 2026-10-23
-
----
-
-## 1. Intención (el porqué)
-
-Construir nuestro propio sistema de trading de cripto para operar en **MEXC**, usando **TradingView** para gráficos y señales. Debe tener los mejores análisis, gráficos muy precisos, todos los datos disponibles y simulación de escenarios y direcciones del precio. Se organiza en **departamentos** (agentes de Claude + módulos de código), cada uno con una responsabilidad clara, y sigue una **metodología propia** que decide qué estrategias merecen dinero real.
-
-La referencia es [`dan-ai-lab/day-trader-fr`](https://github.com/dan-ai-lab/day-trader-fr). De ella tomamos:
-- la cadena `scanner → news → entry → exit → timemachine → budget → risk → broker`;
-- que el riesgo tenga **poder de veto** (`PASS` / `BLOCK`);
-- la simulación de 10 000 escenarios antes de operar;
-- los tests offline con fixtures, para que nada toque dinero real durante el desarrollo.
-
-Lo que **no sirve** de la referencia: el mercado (acciones de EE. UU.), los datos (Yahoo/SEC), los brókers (Alpaca/IBKR), el horario de NYSE y la restricción a posiciones largas. MEXC es cripto 24/7, con spot y futuros perpetuos (largos y cortos, con apalancamiento).
-
-### Metas
-1. Datos completos y limpios de MEXC (velas, libro de órdenes, trades, funding, open interest) más contexto externo.
-2. Gráficos precisos en TradingView (Pine Script propio) y en un panel propio.
-3. Simulación seria: backtest con costes reales, walk-forward, Monte Carlo y escenarios de estrés.
-4. Ejecución en MEXC con controles de riesgo que nadie (ni el bot) puede saltarse.
-5. Un diario de operaciones y un ciclo de mejora continua.
-
-### No-metas (por ahora)
-- Alta frecuencia o market making (latencia de Mac doméstico + comisiones = no compite).
-- Operar en otros exchanges (la arquitectura lo permitirá después vía ccxt).
-- Predicción con IA "caja negra" que no se pueda explicar ni validar.
-
-### Anti-metas (fracaso aunque "funcione")
-- Un bot que opera dinero real con una estrategia que no pasó las puertas de validación (§6).
-- Cualquier camino por el que se pueda **retirar** fondos o saltarse el stop.
-- Sobreoptimizar: estrategias que brillan en el backtest y mueren en vivo.
-- Que el usuario no entienda por qué el bot abrió una posición.
+> **Estado:** BORRADOR PARA APROBACIÓN. No se ha construido nada. La ejecución empieza cuando el repo esté en el Mac del dueño y él apruebe este documento.
+> **Versión:** v2 · 2026-10-23
+> **Convenciones:** todas las horas internas en **UTC**; importes en **USDT**; "R" = la cantidad arriesgada en una operación (distancia entrada→stop × tamaño). Las marcas *(decisión de Claude)* indican elecciones del diseñador que el dueño puede cambiar. Las marcas **[VERIFICAR F0]** son datos externos que se comprueban en la Fase 0 antes de construir encima.
 
 ---
 
-## 2. Realidades técnicas verificadas (oct 2026)
-
-| Tema | Realidad | Consecuencia en el diseño |
-|---|---|---|
-| TradingView → MEXC | TradingView no ejecuta en MEXC. Las alertas envían un **webhook** (plan de pago) a un servidor nuestro. | Montamos un receptor de webhooks propio en el Mac, expuesto con un túnel seguro. |
-| API de futuros MEXC | MEXC cambió el dominio de acceso a la API de futuros el 12-ene-2026. Hubo épocas con la creación de órdenes de futuros por API restringida; hay repos no oficiales que "la saltan". | **Fase 0 incluye una prueba real** de crear/cancelar una orden mínima por API. Nunca usamos "bypasses" no oficiales. Si futuros no está disponible, empezamos en spot. |
-| ccxt + MEXC swap | ccxt soporta MEXC spot y swap (`defaultType: swap`). Hay errores conocidos de modo de posición (código 7002) si no coinciden `openType`/`leverage` con la cuenta. | Capa de ejecución propia sobre ccxt, con fallback al SDK oficial, y tests de cada tipo de orden. |
-| Mac doméstico | Se duerme, pierde red, se actualiza. | Fase 1–3 en el Mac (con `launchd` + `caffeinate`). Antes de dinero serio, migrar el motor a un VPS barato; el Mac queda como panel y laboratorio. |
-
-Fuentes: [anuncios API MEXC](https://www.mexc.com/bn-BD/announcements/api-updates), [CCXT vs MEXC API](https://docs.ccxt.com/docs/comparisons/ccxt-vs-mexc-api), [ccxt issue 7002](https://lightrun.com/answers/ccxt-ccxt-mexc-swap-error-code-7002).
+## Índice
+1. Intención, metas y anti-metas
+2. Objetivo de rendimiento y lo que implica
+3. Realidades técnicas verificadas
+4. Enfoques considerados y elección
+5. Arquitectura: 10 departamentos
+6. Especificación por departamento
+7. Contratos de datos
+8. Metodología: embudo de validación
+9. Motor de riesgo: fórmulas, modos y disyuntores
+10. Ejecución en MEXC
+11. Integración con TradingView
+12. Departamentos como agentes de Claude Code
+13. Operación en el Mac (24/7, seguridad, recuperación)
+14. Estrategia de pruebas
+15. Fases, tareas y criterios de aceptación
+16. Logística: checklist del dueño y costes
+17. Riesgos del proyecto y mitigaciones
+18. Lo que queda a criterio del constructor
+19. Preguntas abiertas para el dueño
+20. Glosario
+21. Fuentes
 
 ---
 
-## 3. Enfoques considerados
+## 1. Intención, metas y anti-metas
 
-| Enfoque | Qué es | Pros | Contras |
+**Intención.** Construir un sistema de trading de cripto **propio y privado** para operar en **MEXC** (spot y futuros perpetuos USDT-M), con **TradingView** para gráficos, indicadores propios y señales. Está organizado en **departamentos** (módulo de código + agente de Claude) y sigue una **metodología propia** que decide con pruebas qué estrategia merece dinero real y cuánto riesgo puede asumir.
+
+**Referencia.** [`dan-ai-lab/day-trader-fr`](https://github.com/dan-ai-lab/day-trader-fr): 11 skills de Claude para acciones de EE. UU. Tomamos de ella:
+- la cadena de decisión `scanner → news → entry → exit → timemachine → budget → risk → broker`;
+- el **veto de riesgo** (`PASS`/`BLOCK`);
+- la simulación de 10 000 caminos antes de cada operación;
+- la confirmación explícita por ticket;
+- los tests offline con fixtures.
+
+Lo que descartamos: el mercado (acciones), los datos (Yahoo/SEC), los brókers (Alpaca/IBKR), el horario NYSE y la restricción a largos.
+
+**Metas**
+1. Datos completos, limpios y auditables de MEXC, más contexto externo.
+2. Gráficos precisos: los indicadores propios deben coincidir con TradingView (error < 0,1 %).
+3. Simulación realista: comisiones, slippage, funding, ambigüedad intravela, walk-forward, Monte Carlo y estrés.
+4. Ejecución segura en MEXC, con riesgo que se adapta al mercado (modos) y que nadie puede saltarse.
+5. Funcionamiento 24/7 con alertas en el móvil y botón de emergencia.
+6. Diario completo y mejora continua semanal.
+
+**No-metas (por ahora):** alta frecuencia o market making; otros exchanges (la arquitectura los permitirá vía ccxt); modelos de IA "caja negra" que no se puedan explicar ni validar.
+
+**Anti-metas (fracaso aunque "funcione"):**
+- Una estrategia con dinero real sin pasar el embudo (§8).
+- Cualquier vía para **retirar fondos**, operar sin stop en el exchange o saltarse el veto.
+- Subir el riesgo para "recuperar" pérdidas.
+- Un backtest brillante que muere en vivo (sobreoptimización).
+- Que el dueño no entienda por qué se abrió una posición.
+
+---
+
+## 2. Objetivo de rendimiento y lo que implica
+
+**Objetivo del dueño:** empezar con **500 USDT** y ganar **+800 a +1000 USDT o más por semana**, es decir, multiplicar el capital por 2,6–3 cada semana (≈ +115–145 USDT/día). Se acepta más riesgo cuando el mercado lo permita, y el sistema debe saber reducirlo cuando no.
+
+### 2.1 Simulación del objetivo
+Monte Carlo de 100 000 caminos, riesgo fijo del 10 % por operación y coste de 0,1R por operación. Scripts: `docs/analisis/mc_objetivo.py` y `docs/analisis/mc_objetivo_800.py`.
+
+| Ventaja de la estrategia | P(+800 en 1 semana), 20 ops | P(+800), 40 ops | P(perder >50 % esa semana), 40 ops |
 |---|---|---|---|
-| **A. Solo TradingView + servicio de terceros** (AlgoWay, 3Commas…) | Pine Script genera alertas; un servicio externo ejecuta en MEXC. | Rápido, poco código. | Datos limitados a lo que ve Pine; simulación pobre; dependes de un tercero con tus claves; sin "departamentos". |
-| **B. Sistema propio en Python + TradingView como capa visual y de señales** ✅ | Nuestro motor de datos, análisis, simulación, riesgo y ejecución. TradingView para gráficos, indicadores Pine propios y como fuente opcional de señales vía webhook. Claude Code orquesta los departamentos. | Control total, datos completos, simulación seria, auditable, ampliable. | Más trabajo inicial. |
-| **C. Framework existente** (Freqtrade / Hummingbot / NautilusTrader) | Adaptar un bot open source. | Mucho hecho ya (backtest, dry-run). | Metodología y departamentos ajenos; soporte MEXC futuros irregular; menos "nuestro". |
-
-**Recomendación: B**, tomando ideas probadas de C (el modo dry-run de Freqtrade, el diseño event-driven de Nautilus) sin depender de ellos. *(Decisión de Claude; el dueño pidió "nuestro propio sistema").*
-
----
-
-## 4. Arquitectura: los departamentos
-
-Cada departamento = **un módulo Python** (lo que hace el trabajo, testeable) + **un agente/skill de Claude Code** (lo que interpreta, explica y coordina). Así funciona igual con o sin Claude.
-
-```
-                 ┌──────────────────────── DIRECCIÓN (Claude orquestador) ────────────────────────┐
-                 │  briefing diario · decide qué departamentos consultar · explica en español      │
-                 └───────────────────────────────────────────────────────────────────────────────────┘
-   ┌──────────┐   ┌────────────┐   ┌─────────────┐   ┌────────────┐   ┌──────────┐   ┌───────────┐
-   │ 1 DATOS  │──▶│ 2 ANÁLISIS │──▶│ 4 ESTRATEGIA│──▶│ 5 SIMULAC. │──▶│ 6 RIESGO │──▶│ 7 EJECUC. │──▶ MEXC
-   └──────────┘   │  TÉCNICO   │   │ / RESEARCH  │   └────────────┘   │  (VETO)  │   └───────────┘
-        │         └────────────┘   └─────────────┘                    └──────────┘         │
-        │         ┌────────────┐          ▲                                                 ▼
-        └────────▶│ 3 CONTEXTO │──────────┘                                         ┌───────────────┐
-                  │ /SENTIMIENTO│        TradingView (webhooks) ──▶ entra por 4     │ 8 MONITOREO   │
-                  └────────────┘                                                    │  Y ALERTAS    │
-                  ┌────────────┐                                                    └───────────────┘
-                  │ 9 GRÁFICOS │◀── todos                       ┌──────────────────┐
-                  └────────────┘                                │ 10 AUDITORÍA /   │◀── todos
-                                                                │   DIARIO         │
-                                                                └──────────────────┘
-```
-
-| # | Departamento | Responsabilidad | Entradas → Salidas |
-|---|---|---|---|
-| 1 | **Datos** | Descargar y guardar histórico y tiempo real de MEXC: velas (1m→1D), trades, libro L2, funding, open interest, mark/index price. Validar huecos y duplicados. | API REST/WS MEXC → Parquet + DuckDB |
-| 2 | **Análisis técnico** | Indicadores (EMA, VWAP, RSI, ATR, Bollinger, Ichimoku…), estructura de mercado (máximos/mínimos, BOS/CHoCH), soportes/resistencias, perfil de volumen, régimen (tendencia / rango / alta volatilidad), multi-timeframe. | velas → `features` |
-| 3 | **Contexto y sentimiento** | Funding y OI agregados, liquidaciones, Fear & Greed, dominancia BTC, calendario macro (FOMC, CPI), noticias cripto, desbloqueos de tokens. | fuentes públicas → `context` |
-| 4 | **Estrategia / Research** | Biblioteca de estrategias como reglas explícitas. Recibe también señales de TradingView. Propone *setups* (dirección, entrada, stop, objetivo, invalidación). | features + context (+ webhook) → `setup` |
-| 5 | **Simulación** | Backtest event-driven con comisiones, slippage y funding; walk-forward; Monte Carlo (10 000 caminos por bootstrap de velas y de trades); escenarios de estrés (−20 % en 1 h, gap de liquidez, funding extremo). Da la probabilidad de objetivo/stop/ninguno. | setup + histórico → `sim_report` |
-| 6 | **Riesgo (veto)** | Tamaño de posición por % de riesgo, límites diarios/semanales, exposición total, apalancamiento máximo, correlación entre posiciones, distancia a liquidación. Responde `PASS` / `BLOCK` + motivo. **Nadie puede saltárselo.** | setup + sim + cuenta → `PASS/BLOCK` |
-| 7 | **Ejecución** | Órdenes en MEXC (spot/swap): límite/mercado, stop-loss y take-profit **en el exchange** (no solo en el bot), idempotencia, reintentos, reconciliación de posiciones al arrancar. | ticket aprobado → orden |
-| 8 | **Monitoreo y alertas** | Seguimiento de posiciones, PnL, salud del sistema (WS caído, latencia, error de API), alertas a Telegram, **kill switch** (cerrar todo y parar). | estado → notificaciones |
-| 9 | **Gráficos** | Indicadores/estrategias Pine Script v6 en TradingView + panel propio (TradingView Lightweight Charts) con entradas, stops, objetivos, escenarios simulados (abanico Monte Carlo) y equity. | todo → visual |
-| 10 | **Auditoría / Diario** | Registro inmutable de cada señal, decisión, veto, orden y resultado. Informe semanal: qué funcionó, qué no, desviación vivo vs. backtest. | todo → `journal` + informes |
-
-### Flujo de una operación
-1. Datos actualiza → Análisis y Contexto calculan.
-2. Estrategia (o una alerta de TradingView) propone un setup.
-3. Simulación evalúa: probabilidades, R esperado, peor caso.
-4. Riesgo decide `PASS`/`BLOCK` y calcula el tamaño.
-5. **Según el nivel de autonomía (§7):** se pide confirmación al usuario o se ejecuta solo.
-6. Ejecución coloca entrada + stop + objetivo en MEXC.
-7. Monitoreo vigila; Auditoría registra; Gráficos lo muestra.
-
----
-
-## 5. Stack tecnológico (Mac) — *decisiones de Claude, revisables*
-
-| Capa | Elección | Motivo |
-|---|---|---|
-| Lenguaje | Python 3.12, gestor `uv` | Ecosistema cuant más completo; `uv` instala rápido y fija versiones. |
-| Exchange | `ccxt` (+ SDK/REST oficial de MEXC como respaldo) | Unifica API; permite añadir exchanges luego. |
-| Datos | Parquet + DuckDB; `polars`/`pandas` | Rápido en local, sin servidor de base de datos. |
-| Indicadores | `pandas-ta` / implementaciones propias testeadas | Control y precisión verificable contra TradingView. |
-| Backtest | Motor event-driven propio + `vectorbt` para barridos masivos | El propio para realismo (fills, funding); vectorbt para explorar parámetros rápido. |
-| Webhooks | FastAPI + Cloudflare Tunnel (o ngrok) | HTTPS público seguro hacia el Mac sin abrir puertos. |
-| Panel | Streamlit o FastAPI + Lightweight Charts | Gráficos estilo TradingView con nuestros datos. |
-| Alertas | Bot de Telegram | Llega al móvil; permite confirmar con un botón. |
-| Secretos | Llavero de macOS (`keyring`) + `.env` fuera de git | Las claves nunca en el repo ni en la conversación. |
-| Procesos 24/7 | `launchd` + `caffeinate` (luego VPS) | Nativo en macOS. |
-| Tests | `pytest` con fixtures offline | Igual que la referencia: nada toca dinero en tests. |
-| Departamentos IA | Claude Code: skills en `.claude/skills/` + subagentes en `.claude/agents/` | Cada departamento consultable por nombre (`/datos`, `/riesgo`…). |
-
-### Estructura del repo prevista
-```
-trading-system/
-├── pyproject.toml
-├── config/            # settings.example.yaml, risk.example.yaml, strategies/*.yaml
-├── src/tradesys/
-│   ├── data/          # 1 Datos
-│   ├── analysis/      # 2 Análisis técnico
-│   ├── context/       # 3 Contexto
-│   ├── strategy/      # 4 Estrategias
-│   ├── sim/           # 5 Simulación (backtest, walkforward, montecarlo, stress)
-│   ├── risk/          # 6 Riesgo
-│   ├── execution/     # 7 Ejecución (paper + mexc)
-│   ├── monitor/       # 8 Monitoreo, telegram, kill switch
-│   ├── charts/        # 9 Panel
-│   ├── journal/       # 10 Auditoría
-│   └── webhook/       # receptor TradingView
-├── pine/              # Indicadores y estrategias Pine Script v6
-├── .claude/agents/    # un agente por departamento
-├── .claude/skills/    # comandos /datos /analisis /simular /riesgo /operar /diario
-├── tests/ + tests/fixtures/
-└── docs/
-```
-
----
-
-## 6. Metodología propia: "Embudo de validación"
-
-Ninguna estrategia toca dinero sin pasar **todas** las puertas, en orden:
-
-| Puerta | Prueba | Criterio para pasar *(valores iniciales, ajustables)* |
-|---|---|---|
-| G0 Hipótesis | Regla escrita en lenguaje claro: por qué debería funcionar. | Explicable en 3 frases; sin parámetros mágicos. |
-| G1 Backtest | ≥ 2 años de datos, con comisiones MEXC reales, slippage y funding. | ≥ 100 operaciones; profit factor > 1,3; max drawdown < 20 %. |
-| G2 Walk-forward | Optimiza en una ventana, prueba en la siguiente, repetido. | El resultado fuera de muestra conserva ≥ 50 % del de la muestra. |
-| G3 Robustez | Parámetros ±20 %, otros pares, otros regímenes. | Sigue siendo rentable; sin "pico" aislado de parámetros. |
-| G4 Monte Carlo | 10 000 remuestreos de operaciones y de velas. | Percentil 5 del drawdown aceptable para el capital; probabilidad de ruina < 1 %. |
-| G5 Estrés | Escenarios: crash −20 %/1 h, gap, funding extremo, API caída. | Ningún escenario supera la pérdida máxima definida. |
-| G6 Papel | 2–4 semanas en vivo sin dinero (paper / testnet). | Resultados dentro del rango previsto por la simulación. |
-| G7 Vivo mínimo | Capital pequeño, tamaño mínimo. | 30+ operaciones dentro de lo esperado. |
-| G8 Escalar | Subir tamaño poco a poco. | Revisión semanal sin desviaciones graves. |
-
-Cada estrategia tiene una **ficha** (`config/strategies/<nombre>.yaml` + informe) con su estado en el embudo. Si en vivo se desvía del rango simulado, **baja automáticamente** a papel.
-
-### Estrategias iniciales candidatas (a validar, no a confiar)
-1. Seguimiento de tendencia multi-timeframe (EMA + estructura + ATR stop).
-2. Ruptura de rango con confirmación de volumen (equivalente cripto del ORB de la referencia, usando sesiones Asia/Europa/EE. UU.).
-3. Reversión a la media en rango (VWAP/Bollinger) solo con régimen "rango".
-4. Filtros de contexto: funding extremo y OI como confirmación o veto.
-5. Señales de TradingView del usuario, tratadas como una estrategia más (también pasan por el embudo).
-
----
-
-## 6b. Objetivo de rendimiento: cuentas hechas
-
-**Objetivo del dueño:** empezar con 500 $ y ganar **+800 a +1000 $ o más por semana** (x2,6–x3 semanal, ≈ +115–145 $/día), aceptando más riesgo cuando el mercado lo permita y bajándolo cuando no.
-
-Probabilidad de lograr +800 $ en una semana (simulación, script `docs/analisis/mc_objetivo_800.py`):
-
-| Ventaja de la estrategia | 20 ops/sem, 10 % riesgo | 40 ops/sem, 10 % riesgo | Riesgo de perder >50 % esa semana (40 ops, 10 %) |
-|---|---|---|---|
-| Excepcional (55 %, 2,5R) — rara, pocas veces sostenible | 75 % | 96 % | 2 % |
+| Excepcional (55 % de acierto, 2,5R) | 75 % | 96 % | 2 % |
 | Buena (50 %, 2R) | 25 % | 56 % | 11 % |
 | Realista (45 %, 1,5R) | 2 % | 8 % | 44 % |
 
-Lectura: el objetivo **solo es alcanzable con una ventaja excepcional + muchas operaciones por semana** (scalping/intradía activo). Por tanto la misión n.º 1 del sistema es **encontrar y demostrar esa ventaja** (G1–G6) antes de apostar; el modo Ataque se habilita solo cuando la ventaja medida lo justifica. Con 500 $ además pesan los mínimos de orden y las comisiones: el Dept. 5 debe simular con las comisiones maker/taker reales de MEXC.
+Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 semanas con menos del 10 % del capital.
 
-Simulación previa con objetivo x2 semanal (100 000 caminos, 20 operaciones/semana, coste 0,1R por operación, script en `docs/analisis/mc_objetivo.py`):
+**Con los topes reales de este diseño** (base 350 al 2 %, ataque 150 al 10 %, operaciones repartidas a medias; script `docs/analisis/mc_objetivo_topes.py`):
 
-Simulación Monte Carlo (100 000 caminos, 20 operaciones/semana, coste 0,1R por operación, script en `docs/analisis/mc_objetivo.py`):
-
-| Riesgo por operación | Ventaja **buena** (50 % acierto, 2R): P(x2 en 1 semana) · P(caer >50 % en 4 semanas) | Ventaja **realista** (45 %, 1,5R): P(x2 en 1 semana) · P(caer >50 % en 4 semanas) |
-|---|---|---|
-| 1 % | 0 % · 0 % | 0 % · 0 % |
-| 5 % | 13 % · 1 % | 0,6 % · 22 % |
-| 10 % | 41 % · 13 % | 6 % · 62 % |
-| 20 % | 59 % · 46 % | 13 % · 91 % (46 % acaba con <10 % del capital) |
-
-**Conclusiones que cambian el diseño:**
-1. **El motor del objetivo es la ventaja (edge), no el apalancamiento.** Con una ventaja normal, subir el riesgo no acerca el x2: acelera la ruina. Con una ventaja fuerte y verificada, el x2 semanal es *posible* algunas semanas, nunca constante.
-2. Por eso **el riesgo permitido se calcula a partir de la ventaja medida**, no del deseo: tope = ½ Kelly sobre el *límite inferior* de la ventaja estimada en las puertas G1–G6. Ejemplo: 45 %/1,5R → Kelly 8 % → tope 4 %; 50 %/2R → Kelly 25 % → tope 12 %.
-3. **El objetivo se trata como "semana objetivo", no como promesa.** El sistema mide la semana contra el objetivo y ajusta el modo; nunca sube el riesgo para "recuperar".
-
-### Modos de riesgo adaptativos
-
-| Modo | Cuándo se activa | Riesgo/op | Apalanc. máx. | Setups permitidos |
-|---|---|---|---|---|
-| 🛡️ **Escudo** | Tras pérdida diaria, régimen confuso, noticia macro, o drawdown > 15 % | 0,5 % | 2x | Solo A+ o ninguno |
-| ⚖️ **Normal** | Por defecto | 1–2 % | 5x | A y A+ |
-| ⚔️ **Ataque** | Régimen de tendencia claro + estrategia en G7 + racha dentro de lo esperado | hasta el tope ½ Kelly | 10x | A+ con confluencia multi-timeframe |
-| 🚀 **Turbo** | Solo con el **capital de ataque** (abajo), aprobado por el dueño para esa sesión | hasta 2× el tope ½ Kelly | 20x | A+ en momentos de expansión de volatilidad |
-
-Cambio de modo automático por el Departamento de Riesgo con reglas explícitas (régimen, volatilidad ATR, racha, drawdown, calendario). **Bajar de modo es inmediato; subir requiere que se cumplan todas las condiciones** y en Turbo además tu "sí".
-
-### Estructura de capital (para buscar el x2 sin arriesgar todo)
-- **Capital base** (p. ej. 70 %): solo modos Escudo/Normal. Crece despacio y protege la cuenta.
-- **Capital de ataque** (p. ej. 30 %): puede ir a Ataque/Turbo. Se asume que puede perderse entero; si se pierde, se para hasta la revisión semanal (no se rellena desde la base automáticamente).
-- **Trinquete de beneficios:** cada vez que el capital de ataque se duplica, la mitad de la ganancia pasa a la base (o se retira). Así una buena semana no se devuelve en la siguiente.
-- **Piramidación:** en Ataque, añadir a posiciones ganadoras con el stop ya en break-even, nunca promediar perdedoras.
-
-### Adaptación a distintas temporalidades
-Cada estrategia y cada modo declaran su temporalidad; el sistema elige según régimen y volatilidad:
-
-| Estilo | Marcos | Cuándo encaja | Riesgo típico |
+| Ventaja | P(+800 en 1 semana), 20 ops | P(+800), 40 ops | Ganancia semanal mediana (40 ops) |
 |---|---|---|---|
-| Scalping | 1m–5m (contexto 15m) | Alta volatilidad, sesiones solapadas UE/EE. UU., spread bajo | Comisiones pesan mucho: solo con taker/maker calculados |
-| Intradía | 15m–1h (contexto 4h) | Tendencia diaria definida | Normal/Ataque |
-| Swing | 4h–1D (contexto 1W) | Tendencias de varios días, menor ruido | Normal; tamaño menor por stops anchos |
+| Excepcional | 1,8 % | 29 % | +540 |
+| Buena | 0 % | 2,9 % | +177 |
+| Realista | 0 % | 0 % | −9 |
 
-Confluencia multi-timeframe obligatoria: el marco superior define la dirección, el medio el setup, el inferior la entrada.
+**Tensión que decide el dueño (§19, pregunta 1):** los topes de seguridad hacen casi imposible perder más de 150 USDT en una semana, pero también hacen que +800/semana sea la excepción y no la norma. Para acercarse al objetivo hay que asignar más capital al bucket de ataque, lo que aumenta en la misma medida lo que se puede perder.
 
-### Otras formas de ver el gráfico (Dept. 2 y 9)
-Para el modo agresivo no basta con velas y medias. El sistema incluirá:
-- **Heikin Ashi, Renko y velas de rango**: filtran ruido para ver tendencia limpia.
-- **Perfil de volumen / Market Profile**: POC, áreas de valor, zonas de bajo volumen donde el precio se acelera.
-- **Order flow**: delta, CVD (volumen acumulado comprador vs vendedor), footprint a partir de los trades de MEXC.
-- **Libro de órdenes**: muros de liquidez, desequilibrio bid/ask.
-- **Mapas de liquidaciones y OI**: dónde se concentran stops y liquidaciones (imanes de precio).
-- **Funding y basis**: posicionamiento extremo de la masa → combustible para squeezes.
-- **Clasificador de régimen** (tendencia / rango / expansión / compresión) que decide qué vista y qué estrategia mandan.
-- **Abanico de escenarios**: el Dept. 5 dibuja sobre el gráfico los caminos simulados (percentiles 5/50/95) y las probabilidades de tocar objetivo vs stop.
+### 2.2 Consecuencias de diseño
+1. **El motor del objetivo es la ventaja (edge), no el apalancamiento.** Por eso la misión n.º 1 del sistema es *encontrar y demostrar* ventaja (§8) antes de apostar fuerte.
+2. **El riesgo permitido se deriva de la ventaja medida** (½ Kelly sobre el límite inferior del intervalo de confianza, §9.2), nunca del objetivo.
+3. **El objetivo exige muchas operaciones** (scalping o intradía activo), y con 500 USDT **las comisiones son decisivas**. Ejemplo: con 10x de apalancamiento (5000 USDT nocionales) y 0,02 % de taker en entrada y salida, cada operación cuesta 2 USDT; 40 operaciones a la semana suman 80 USDT, el **16 % del capital**. Si la entrada y los objetivos se ejecutan como *maker* (0 % [VERIFICAR F0]), el coste se reduce aproximadamente a la mitad. Las salidas por stop siguen siendo taker y el slippage no desaparece. Por tanto la ejecución es **maker-first** (§10, punto 3).
+4. El objetivo se trata como **meta semanal medida**, no como promesa: el sistema informa del avance contra la meta, y estar por debajo **nunca** sube el riesgo.
 
 ---
 
-## 7. Riesgo y seguridad (reglas duras)
+## 3. Realidades técnicas verificadas
 
-**Valores por defecto (el dueño los fija en la Fase 0; los modos de §6b los ajustan dentro de estos techos):**
-- Riesgo por operación: según modo (0,5 % Escudo → tope ½ Kelly en Ataque).
-- Pérdida máxima diaria: 3 % del capital base / 30 % del capital de ataque → se para hasta el día siguiente y pasa a Escudo.
-- Pérdida máxima semanal: 6 % del capital base / 100 % del de ataque → se para y exige revisión humana.
-- Apalancamiento máximo: según modo, margen **aislado** siempre; el stop debe quedar lejos de la liquidación (validado antes de cada orden).
-- Máximo de posiciones simultáneas y de exposición correlacionada (p. ej., no 3 largos de altcoins correlacionadas).
-- Stop-loss **siempre colocado en el exchange** en el mismo momento que la entrada.
+| Tema | Dato | Estado | Consecuencia |
+|---|---|---|---|
+| Dominio API de futuros MEXC | Desde el 12-ene-2026 la API de futuros está en `https://api.mexc.com`. `contract.mexc.com` dejó de funcionar el 19-ene-2026 a las 16:00 UTC. Parámetros y firma, sin cambios. | Fuente oficial MEXC | Configurar `api.mexc.com`; ignorar ejemplos antiguos con `contract.mexc.com`. |
+| Órdenes de futuros por API | Hubo épocas con la creación restringida. Un tercero afirma que se reabrió el 31-mar-2026 (salvo la Zona de Innovación). | **[VERIFICAR F0]** | Prueba real en F0: crear y cancelar una orden mínima. **Prohibido** usar "bypasses" no oficiales. Si no funciona, se empieza en spot. |
+| Comisiones de futuros USDT-M | Maker 0 %, taker 0,02 % en el nivel base (varias fuentes; una dice 0,02/0,06). Zona de Innovación: 0,04/0,10. Las liquidaciones no tienen tarifa cero. Puede variar por región. | **[VERIFICAR F0]** en la cuenta | Las comisiones se leen de la API/cuenta, nunca se escriben a mano. Se excluye la Zona de Innovación por defecto. |
+| Comisiones spot | Se suelen citar maker 0 % / taker 0,05 %. | **[VERIFICAR F0]** | Igual que arriba. |
+| Mínimos spot | Orden mínima ≈ 1 USDT; cada par tiene sus reglas. | Help center MEXC | Leer reglas por par de `exchangeInfo` y validar antes de enviar. |
+| Límite de órdenes spot | Órdenes batch limitadas a 5/s (anuncio de mar-2025); batch de hasta 20 órdenes. | **[VERIFICAR F0]** | Limitador de peticiones centralizado (§10.6). |
+| ccxt + MEXC swap | Soporta swap con `defaultType: swap`. Error conocido 7002 ("Position mode mismatch") si `openType`/`leverage` o el modo de posición no coinciden con la cuenta. | Docs ccxt + issue | Al arrancar se leen y fijan explícitamente el modo de posición, el tipo de margen y el apalancamiento. Hay tests para cada tipo de orden. |
+| Webhooks de TradingView | Solo puertos 80/443, sin IPv6, **la petición se cancela a los 3 s**. Salen de 4 IPs: 52.89.214.238, 34.212.75.30, 54.218.53.128, 52.32.178.7. Requieren plan de pago (Essential o superior) y probablemente 2FA. | Oficial (red); terceros (plan/2FA) | El receptor responde en < 100 ms y procesa en cola (§11). Allowlist de esas IPs. |
+| Mac doméstico | Se duerme, cambia de IP, se actualiza, pierde red. | — | Hasta la Fase 3, Mac con `launchd`/`pmset`. Desde la Fase 4, motor en VPS con IP fija; el Mac queda como laboratorio y panel (§13). |
 
-**Seguridad:**
-- Clave API de MEXC **sin permiso de retiro**, con **lista blanca de IP**.
-- Subcuenta de MEXC dedicada al bot, con solo el capital asignado.
-- Claves en el Llavero de macOS; `.env` en `.gitignore`; escaneo de secretos antes de cada commit.
-- Webhook de TradingView con secreto compartido + validación de esquema + lista de símbolos permitidos.
-- Kill switch: comando de Telegram y `/kill` en Claude → cancela órdenes, cierra posiciones y detiene el motor.
+---
 
-**Niveles de autonomía** *(propuesta de Claude; el dueño decide a qué nivel llegar)*:
+## 4. Enfoques considerados y elección
+
+| Enfoque | Qué es | Pros | Contras |
+|---|---|---|---|
+| A. TradingView + servicio de terceros (AlgoWay, 3Commas…) | Pine Script genera alertas; un tercero ejecuta en MEXC. | Rápido. | Tus claves en un tercero; datos y simulación limitados; sin departamentos ni metodología propia. |
+| **B. Sistema propio en Python + TradingView como capa visual y de señales** ✅ | Motor propio de datos, análisis, simulación, riesgo y ejecución. TradingView para gráficos y como fuente opcional de señales. Claude Code coordina los departamentos. | Control total, auditable, simulación seria, ampliable, privado. | Más trabajo inicial. |
+| C. Adaptar un framework (Freqtrade, Hummingbot, Nautilus) | Partir de un bot open source. | Backtest y dry-run hechos. | Metodología ajena; soporte irregular de MEXC futuros; no es "nuestro". |
+
+**Elegido: B** *(decisión de Claude, coherente con "crea nuestro propio sistema")*. Se toman ideas de C: el dry-run de Freqtrade y el diseño event-driven de Nautilus, sin depender de ellos.
+
+---
+
+## 5. Arquitectura: 10 departamentos
+
+```
+                ┌──────────────── DIRECCIÓN (orquestador Claude) ─────────────────┐
+                │ briefing · prioriza · explica en español · nunca envía órdenes  │
+                └──────────────────────────────────────────────────────────────────┘
+ ┌─────────┐   ┌───────────┐   ┌────────────┐   ┌───────────┐   ┌──────────┐   ┌───────────┐
+ │1 DATOS  │──▶│2 ANÁLISIS │──▶│4 ESTRATEGIA│──▶│5 SIMULAC. │──▶│6 RIESGO  │──▶│7 EJECUCIÓN│──▶ MEXC
+ └─────────┘   │  TÉCNICO  │   └────────────┘   └───────────┘   │ (VETO)   │   └───────────┘
+      │        └───────────┘         ▲  ▲                       └──────────┘         │
+      │        ┌───────────┐         │  └── TradingView webhook (receptor §11)        ▼
+      └───────▶│3 CONTEXTO │─────────┘                                       ┌──────────────┐
+               └───────────┘                                                 │8 MONITOREO   │
+ ┌───────────┐                       ┌─────────────┐                         │ Telegram/KILL│
+ │9 GRÁFICOS │◀─── todos             │10 AUDITORÍA │◀─── todos (solo añade)  └──────────────┘
+ └───────────┘                       └─────────────┘
+```
+
+**Principios de arquitectura**
+- **Event-driven:** un bus interno de eventos (`MarketEvent`, `SignalEvent`, `SetupEvent`, `RiskDecision`, `OrderEvent`, `FillEvent`, `AlertEvent`). **El mismo código** corre en backtest, papel y vivo; solo cambia la fuente de datos y el adaptador de ejecución.
+- **Separación de poderes:** solo el Dept. 7 habla con la API de órdenes, y solo con un `RiskDecision=PASS` firmado (hash del ticket + caducidad de 60 s).
+- **Todo se registra:** cada evento se escribe en el diario antes de producir efectos.
+- **Configuración declarativa:** estrategias, riesgo y modos en YAML versionado. Cambiar un límite queda en git.
+
+---
+
+## 6. Especificación por departamento
+
+### Dept. 1 — Datos
+- **Fuentes MEXC:** velas 1m, 5m, 15m, 1h, 4h y 1D (REST para histórico, WebSocket en vivo), trades, libro L2 (top 20 niveles, snapshot cada 1 s + deltas), funding (actual, previsto e histórico), open interest, mark price e index price, reglas de cada par (`exchangeInfo` / contract detail).
+- **Histórico profundo:** si MEXC no da suficiente histórico de 1m, se usan los volcados públicos de Binance (`data.binance.vision`) **solo para investigación** en BTC/ETH, marcados `source=binance_proxy`. Toda estrategia debe re-validarse con datos de MEXC antes de la puerta G6.
+- **Calidad:** detección de huecos, duplicados, velas con volumen 0 y saltos > 10 desviaciones estándar. Relleno de huecos por REST. Informe diario `data_quality`.
+- **Almacenamiento:** Parquet particionado `data/{exchange}/{market}/{symbol}/{tf}/YYYY-MM.parquet`, con vistas DuckDB encima.
+- **Universo por defecto** *(decisión de Claude)*: BTCUSDT y ETHUSDT, más hasta 8 pares del top 20 por volumen de futuros, con spread medio < 0,05 % y fuera de la Zona de Innovación.
+- **Aceptación:** 12 meses de 1m sin huecos sin explicar en el universo; latencia WS→bus < 500 ms (p95).
+
+### Dept. 2 — Análisis técnico
+- **Indicadores** (implementación propia, con tests "golden" contra exportaciones CSV de TradingView): EMA/SMA, VWAP (anclado por sesión y por evento), RSI, MACD, ATR, ADX/DMI, Bollinger + ancho de banda, Keltner, Ichimoku, Supertrend, Choppiness Index, OBV.
+- **Estructura de mercado:** pivotes (máximos y mínimos), BOS/CHoCH (rotura y cambio de estructura), zonas de oferta y demanda, gaps de valor (FVG), barridos de liquidez.
+- **Vistas alternativas del precio:** Heikin Ashi, Renko (tamaño de ladrillo = ATR), velas de rango, velas de volumen.
+- **Volumen y order flow:** perfil de volumen (POC, VAH/VAL, nodos de bajo volumen), delta por vela, CVD, footprint construido a partir de los trades y desequilibrio del libro.
+- **Clasificador de régimen** (por símbolo y temporalidad; umbrales iniciales que se calibran en el Laboratorio):
+
+| Régimen | Regla inicial |
+|---|---|
+| TENDENCIA_ALCISTA / BAJISTA | ADX(14) > 25 y EMA50 con pendiente en la dirección y precio del mismo lado de EMA200 |
+| RANGO | ADX < 20 y Choppiness > 61,8 |
+| COMPRESIÓN | Ancho de Bollinger en percentil < 10 de los últimos 90 días |
+| EXPANSIÓN | ATR en percentil > 90 y rotura de estructura reciente |
+| CAOS | ATR en percentil > 98, o movimiento > 5 % en 15 min, o spread > 3× la media |
+
+- **Multi-timeframe:** cada análisis produce una lectura por marco superior / medio / inferior y una puntuación de alineación de 0 a 3.
+- **Salida:** `Features` por símbolo, temporalidad y vela cerrada. **Solo se usan velas cerradas**, sin mirar al futuro (comprobado por test).
+
+### Dept. 3 — Contexto y sentimiento
+- **MEXC:** funding (nivel y percentil), OI (cambio en 1h/4h/24h), basis entre perpetuo y spot.
+- **Externos gratuitos** *(decisión de Claude)*: Fear & Greed (alternative.me), dominancia de BTC y capitalización (CoinGecko), calendario macro (FOMC, CPI, NFP; fuente por decidir en F2), desbloqueos de tokens del universo.
+- **Opcionales de pago** (se deciden en F2 según presupuesto): mapas de liquidaciones agregadas (p. ej. Coinglass), noticias en tiempo real.
+- **Salida:** `Context`, con banderas: `macro_event_window` (±30 min de un evento de alto impacto), `funding_extreme` (percentil > 95 o < 5), `oi_spike`.
+
+### Dept. 4 — Estrategia / Research
+- Cada estrategia es una clase con `on_bar(features, context) → Setup | None` y una ficha YAML: `id`, hipótesis, temporalidades, regímenes permitidos, modos permitidos, parámetros, estado en el embudo (G0–G8).
+- **Setup** = dirección, tipo de entrada (límite/stop), precio de entrada, stop, objetivos (TP1/TP2), invalidación, caducidad, calidad (A+/A/B), razón en texto.
+- **Calidad del setup** *(decisión de Claude)*: A+ = alineación 3/3 + régimen permitido + contexto sin banderas en contra + R:R ≥ 2. A = alineación ≥ 2/3 y R:R ≥ 1,5. B = el resto, que **nunca** se opera en vivo.
+- **Candidatas iniciales** (hipótesis, no promesas):
+  1. Seguimiento de tendencia multi-timeframe (EMA + estructura + stop por ATR).
+  2. Ruptura de rango de sesión con confirmación de volumen/CVD (sesiones Asia 00–08, Europa 07–16, EE. UU. 13:30–20 UTC).
+  3. Reversión a VWAP/Bollinger, solo en régimen RANGO.
+  4. Squeeze por funding extremo + OI en aumento + rotura.
+  5. Salida de COMPRESIÓN hacia EXPANSIÓN.
+  6. Señales de TradingView del dueño, tratadas como una estrategia más que pasa el embudo.
+
+### Dept. 5 — Simulación
+- **Backtest event-driven** con el mismo código que en vivo:
+  - Comisiones maker/taker reales por par.
+  - Slippage: un modelo proporcional al spread y la volatilidad para órdenes taker; probabilidad de ejecución para las maker (solo se ejecuta si el precio *atraviesa* el límite).
+  - Funding cada 8 h [VERIFICAR F0 intervalo por par].
+  - Latencia simulada de 300 ms.
+  - Mínimos y redondeos de cada par.
+- **Ambigüedad intravela:** si el stop y el objetivo caen dentro de la misma vela, se resuelve con datos de 1m. Si sigue siendo ambiguo, se asume **el stop** (pesimista).
+- **Precio de disparo:** en vivo, los stops se disparan por *mark price* (§10). El backtest usa la serie de mark price cuando existe; si no, el último precio más un margen de ±0,05 % *(decisión de Claude)*. En G6 se mide la diferencia real.
+- **Datos de order flow:** los trades y el libro L2 se **graban desde el primer día de la F1**, porque MEXC no da histórico profundo de ellos. Las estrategias que dependen de CVD, footprint o desequilibrio del libro se aplazan hasta tener ≥ 3 meses grabados, y para ellas G1 exige ≥ 3 meses en lugar de 12 *(decisión de Claude)*.
+- **Walk-forward:** ventanas deslizantes (p. ej. 6 meses de entrenamiento y 1 de prueba), con métrica de eficiencia WFE = rendimiento fuera de muestra / rendimiento en muestra.
+- **Robustez:** barrido de parámetros ±20 % (mapa de calor), otros pares y otros regímenes.
+- **Estadística anti-sobreoptimización:** Deflated Sharpe Ratio, Probabilidad de Sobreajuste del Backtest (PBO por CSCV) e intervalo de confianza por bootstrap de la expectativa en R.
+- **Monte Carlo:** (a) remuestreo de la secuencia de operaciones (10 000 caminos) para la distribución del drawdown y de la ruina; (b) bootstrap por bloques de velas para el abanico de caminos de precio de un setup concreto: P(objetivo primero), P(stop primero), P(ninguno al caducar).
+- **Estrés:** −20 % en 1 h; gap de 3 % a través del stop; funding 10× el normal durante 3 días; API caída 15 min con posición abierta; spread 10×.
+- **Salida:** `SimReport` (métricas, intervalos de confianza, gráficos y veredicto por puerta).
+
+### Dept. 6 — Riesgo (con veto)
+Se detalla en §9. Es la única autoridad que emite `PASS`/`BLOCK` y fija el tamaño. Su configuración (`config/risk.yaml`) solo la cambia el dueño. Un hook de Claude impide editarla sin confirmación (§12).
+
+### Dept. 7 — Ejecución
+Se detalla en §10. Tiene adaptadores `PaperBroker` (simulado con datos en vivo) y `MexcBroker` (ccxt + REST oficial de respaldo).
+
+### Dept. 8 — Monitoreo y alertas
+- **Heartbeat** cada 30 s. Alarmas: WS sin datos > 10 s, error de API > 3/min, reloj desviado > 500 ms, posición sin stop en el exchange, discrepancia entre posiciones locales y las del exchange.
+- **Telegram:** notifica entradas, salidas, cambios de modo, vetos importantes, alarmas, informe diario (00:00 UTC) e informe semanal (domingo).
+- **Comandos de Telegram** (solo responde al chat ID del dueño): `/estado`, `/posiciones`, `/modo`, `/pausa`, `/reanudar`, `/kill`, `/si <ticket>`, `/no <ticket>`, `/turbo <horas>`.
+- **KILL:** cancela todas las órdenes, cierra todas las posiciones a mercado, pone el motor en `HALTED` y exige un `/reanudar` manual. Se prueba en cada fase.
+
+### Dept. 9 — Gráficos
+- **TradingView (Pine Script v6):**
+  - `TS-Regime`: régimen y alineación multi-timeframe.
+  - `TS-Structure`: BOS/CHoCH, zonas y FVG.
+  - `TS-Flow`: delta/CVD aproximado.
+  - `TS-Signals`: estrategias del Dept. 4 portadas a Pine, para verlas y para alertas.
+  - Plantilla de alerta JSON (§11).
+- **Panel propio** (FastAPI + TradingView Lightweight Charts, o Streamlit *(decisión de Claude: se decide en F1 con un prototipo)*):
+  - Velas + indicadores.
+  - Entradas, stops y objetivos reales.
+  - Abanico Monte Carlo (percentiles 5/50/95) sobre el gráfico.
+  - Curva de capital base y de ataque, meta semanal frente a lo real.
+  - Modo actual y registro de vetos.
+
+### Dept. 10 — Auditoría / Diario
+- **Diario:** SQLite/DuckDB *append-only*. Cada señal, setup, simulación, decisión de riesgo, orden, ejecución, cambio de modo y comando, con la marca de tiempo y la versión de configuración (hash de git).
+- **Informe semanal:** PnL por estrategia, modo, régimen y sesión; vivo frente a simulado (¿dentro del intervalo?); coste de comisiones y slippage; las 3 mejores y las 3 peores operaciones con su gráfico; recomendaciones (bajar una estrategia a papel, etc.).
+- **Degradación automática:** si una estrategia en vivo queda fuera del percentil 5 de su simulación durante 2 semanas, vuelve a G6 (papel).
+
+---
+
+## 7. Contratos de datos (resumen)
+
+```text
+Candle      {symbol, tf, ts_open, o, h, l, c, v, quote_v, n_trades, source}
+Trade       {symbol, ts, price, qty, side, trade_id}
+BookSnap    {symbol, ts, bids[[p,q]x20], asks[[p,q]x20]}
+Funding     {symbol, ts, rate, next_ts, predicted_rate}
+OpenInt     {symbol, ts, oi}
+Features    {symbol, tf, ts, indicators{...}, regime, mtf_alignment, structure{...}}
+Context     {ts, fear_greed, btc_dom, flags{macro_event_window, funding_extreme, oi_spike}}
+Setup       {setup_id, strategy_id, symbol, side, entry_type, entry, stop, tp[], invalidation,
+             expires_at, quality, reason, source: internal|tradingview}
+SimReport   {setup_id|strategy_id, p_target_first, p_stop_first, p_none, exp_R, ci95_exp_R, ...}
+RiskDecision{setup_id, verdict: PASS|BLOCK, reasons[], mode, risk_usdt, qty, leverage,
+             margin_bucket: base|ataque, liq_price, ticket_hash, valid_until}
+Order       {client_order_id, ticket_hash, symbol, side, type, price, qty, reduce_only, post_only}
+Fill        {client_order_id, exch_order_id, ts, price, qty, fee, fee_asset}
+```
+
+Todos los modelos se definen con `pydantic` y tienen tests de serialización.
+
+---
+
+## 8. Metodología: embudo de validación
+
+Ninguna estrategia toca dinero sin pasar **todas** las puertas en orden. *(Umbrales iniciales: decisión de Claude; los ajusta el dueño en `config/gates.yaml`.)*
+
+| Puerta | Prueba | Criterio para pasar |
+|---|---|---|
+| **G0 Hipótesis** | Regla escrita: qué ineficiencia explota y por qué existe. | Explicable en 3 frases; ≤ 5 parámetros libres. |
+| **G1 Backtest** | ≥ 12 meses (ideal 24), costes reales, solo velas cerradas. | ≥ 200 operaciones; IC95 inferior de la expectativa > 0 R después de costes; profit factor > 1,3; drawdown máx. < 25 %. |
+| **G2 Walk-forward** | ≥ 6 ventanas. | WFE ≥ 0,5; ≥ 2/3 de las ventanas rentables. |
+| **G3 Robustez** | Parámetros ±20 %, ≥ 3 pares, regímenes separados. | Sin "picos aislados"; rentable en ≥ 2/3 de las variantes. |
+| **G4 Estadística** | Deflated Sharpe, PBO. | DSR > 0,95; PBO < 0,2. |
+| **G5 Monte Carlo + estrés** | 10 000 caminos + escenarios del Dept. 5. | P(ruina del capital de ataque) < 5 % con el riesgo propuesto; ningún escenario de estrés supera los disyuntores (§9.4). |
+| **G6 Papel** | 2–4 semanas en vivo con `PaperBroker`. | ≥ 30 operaciones; resultado dentro del IC90 simulado; coste real de ejecución ≤ el modelado. |
+| **G7 Vivo mínimo** | Dinero real, modo Normal, tamaño mínimo. | ≥ 30 operaciones dentro del IC90; sin incidentes de ejecución. |
+| **G8 Escalar** | Habilita Ataque/Turbo para esa estrategia. | Revisión semanal sin degradación (§6, Dept. 10). |
+
+Cada estrategia tiene su ficha con el estado y la evidencia (enlaces a `SimReport`). Ninguna estrategia se "promociona" a mano saltándose una puerta. **Pasar G6 da el estado `G7-en-curso`**, que permite operar en vivo solo en modo Normal y con el tamaño mínimo del par. `MexcBroker` rechaza cualquier setup de una estrategia por debajo de `G7-en-curso`.
+
+---
+
+## 9. Motor de riesgo: fórmulas, modos y disyuntores
+
+### 9.1 Tamaño de posición (futuros lineales USDT-M)
+```
+riesgo_usdt   = capital_del_bucket × riesgo_pct(modo, estrategia)
+coste_por_ud  = entrada × fee_entrada + stop × fee_salida + slippage_estimado
+cantidad      = riesgo_usdt / (|entrada − stop| + coste_por_ud)   → redondeo hacia ABAJO al paso del par
+nocional      = cantidad × entrada
+margen_máx    = capital_del_bucket / posiciones_máx (3)          # cada posición puede usar como mucho 1/3 del bucket
+apalancamiento= ceil(nocional / margen_máx)                      # el MÍNIMO apalancamiento que cabe en ese margen
+margen_asignado = nocional / apalancamiento                      # margen aislado real que se bloquea
+Requisito: apalancamiento ≤ apalancamiento_máx(modo); si no → BLOCK
+```
+El apalancamiento no decide cuánto se arriesga (eso lo decide el stop). Solo decide cuánto margen se inmoviliza. Por eso se usa el mínimo posible.
+Si la cantidad redondeada queda por debajo del mínimo del par → `BLOCK` (motivo: "tamaño mínimo excede el riesgo").
+
+### 9.2 Tope de riesgo derivado de la ventaja (Kelly prudente)
+```
+p_low = límite inferior Wilson 95 % de la tasa de acierto (operaciones de G1–G7)
+b_low = límite inferior bootstrap 95 % de (ganancia media / pérdida media)
+kelly = p_low − (1 − p_low) / b_low
+fracción_kelly(modo) = 0,5 en Escudo/Normal/Ataque · 0,75 en Turbo
+tope_estrategia = max(0, fracción_kelly(modo) × kelly)   # sobre la estimación pesimista
+riesgo_pct = min(tope_estrategia, techo_del_modo)
+```
+Turbo usa ¾ de Kelly a propósito: es la única excepción, solo en el bucket de ataque y con permiso explícito del dueño por sesión. Nunca se usa Kelly completo.
+Si `kelly ≤ 0`, la estrategia no opera en vivo.
+
+### 9.3 Comprobación de liquidación (margen aislado)
+```
+liq_long  ≈ entrada × (1 − 1/apal + mmr)      liq_short ≈ entrada × (1 + 1/apal − mmr)
+Regla: |entrada − stop| ≤ 0,5 × |entrada − liq|   (el stop debe saltar mucho antes que la liquidación)
+```
+`mmr` (margen de mantenimiento) se lee por par desde la API. Si falla la regla, se baja el apalancamiento; si aun así falla → `BLOCK`.
+
+### 9.4 Estructura de capital y disyuntores
+*(Porcentajes iniciales: decisión de Claude. El dueño los fija en la F0.)*
+
+| Bucket | % inicial (500 USDT) | Modos permitidos | Pérdida diaria máx. | Pérdida semanal máx. |
+|---|---|---|---|---|
+| **Base** | 70 % (350) | Escudo, Normal | 3 % del bucket → pausa hasta 00:00 UTC | 6 % → pausa + revisión humana |
+| **Ataque** | 30 % (150) | Escudo, Normal, Ataque, Turbo | 30 % del bucket → pausa hasta 00:00 UTC | 100 % del bucket → pausa + revisión; **no se rellena automáticamente desde la base** |
+
+**Cómo se reparten modos y buckets:**
+- **Cada bucket tiene su propio modo y sus propios contadores** (racha, drawdown desde el pico, pérdida diaria y semanal). El "drawdown ≥ 15 %" se mide sobre el pico del propio bucket.
+- **Disparadores globales** (`macro_event_window`, salud del sistema degradada) ponen **ambos** buckets en Escudo. El régimen CAOS pone en Escudo solo las operaciones de **ese símbolo**.
+- **Asignación de un setup a un bucket** (la hace Riesgo): si el setup es A+, la estrategia está en G8 y el bucket de ataque está en Ataque o Turbo → bucket de ataque. En cualquier otro caso → bucket base con su modo. Si el bucket elegido está en pausa, el setup no se reasigna al otro: BLOCK.
+
+- **Trinquete:** cuando el bucket de ataque llega a 2× su valor inicial, el 50 % de la ganancia pasa a la base (o a retirada, a elección del dueño).
+- **Racha:** 3 pérdidas seguidas en un bucket → Escudo durante 4 h.
+- **Exposición:** máximo 3 posiciones abiertas; exposición correlacionada (correlación de 1h a 30 días > 0,7) que cuenta como una sola posición a efectos de riesgo; nocional total ≤ 10× el capital total.
+- **Sin promediar a la baja:** nunca se añade a una posición perdedora. Piramidación solo en Ataque, con el stop ya en break-even y el riesgo total de la posición ≤ el riesgo inicial.
+
+### 9.5 Modos de riesgo (máquina de estados)
+
+| Modo | Techo de riesgo/op | Apalancamiento máx. | Calidad mínima | Entrar | Salir |
+|---|---|---|---|---|---|
+| 🛡️ **Escudo** | 0,5 % | 2x | A+ | Cualquiera: disyuntor diario, 3 pérdidas seguidas, drawdown desde el pico ≥ 15 %, régimen CAOS, `macro_event_window`, salud del sistema degradada | A las 00:00 UTC o cuando haya pasado el motivo y lleven 4 h sin disparadores |
+| ⚖️ **Normal** | 2 % | 5x | A | Por defecto | — |
+| ⚔️ **Ataque** | ½ Kelly (máx. 10 %) | 10x | A+ con alineación 3/3 | **Todas:** estrategia en G8, régimen TENDENCIA o EXPANSIÓN, sin disparadores de Escudo en 24 h, PnL semanal del bucket ≥ −10 % (nunca para recuperar), salud OK | Cualquier condición deja de cumplirse, o una pérdida |
+| 🚀 **Turbo** | ¾ Kelly (máx. 15 %) | 20x | A+ | Las de Ataque + `/turbo <horas>` del dueño (máx. 4 h por sesión) | Fin de la sesión, pérdida ≥ 15 % del bucket en la sesión, o cualquier disparador de Escudo |
+
+**Bajar es inmediato; subir exige todas las condiciones.** Cada cambio de modo se notifica y se registra.
+
+### 9.6 Lista de comprobación PASS/BLOCK (en orden)
+1. Estado HALTED o pausa → BLOCK
+2. Estrategia por debajo de `G7-en-curso` en vivo → BLOCK (en `G7-en-curso`: solo modo Normal y tamaño mínimo)
+3. Calidad del setup < mínima del modo → BLOCK
+4. Régimen no permitido por la estrategia → BLOCK
+5. Disyuntores del bucket → BLOCK
+6. Exposición/correlación excedida → BLOCK
+7. Tamaño: mínimo del par > riesgo permitido → BLOCK
+8. Liquidación (§9.3) imposible de cumplir → BLOCK
+9. Simulación del setup: exp_R ≤ 0 tras costes → BLOCK
+10. Precio actual a > 0,3 × |entrada − stop| de la entrada (setup "caducado") → BLOCK
+11. → PASS con `ticket_hash` y `valid_until = ahora + 60 s`
+
+**Vida del ticket:**
+- `valid_until` cubre solo el **envío de la primera orden de entrada**. Las re-cotizaciones maker posteriores están permitidas mientras el setup no haya caducado (`expires_at`) y siga cumpliendo la regla 10.
+- **En L2**, el "sí" del dueño **no** reutiliza el ticket: al confirmar, Riesgo **repite la lista completa** con el precio y el estado del momento. Si el resultado cambia (tamaño, modo o BLOCK), se informa y no se ejecuta sin un nuevo "sí".
+
+---
+
+## 10. Ejecución en MEXC
+
+1. **Arranque:** sincronizar la hora (NTP, desviación < 500 ms) y leer las reglas de cada par, las comisiones de la cuenta, el modo de posición, el tipo de margen y el apalancamiento. Se fijan explícitamente: **margen aislado** y modo de posición acordado [VERIFICAR F0, hedge u one-way]. **Reconciliación:** las posiciones y órdenes del exchange mandan sobre el estado local.
+2. **Órdenes idempotentes:** `client_order_id = {ticket_hash[:16]}-{n}`. Si se reintenta, se consulta antes de reenviar.
+3. **Maker-first:** la entrada va como límite *post-only*. Si no se ejecuta en `T` segundos (por estrategia; scalping 20 s, intradía 120 s), se re-cotiza hasta 2 veces. Pasar a taker solo si el setup lo permite y la expectativa en R tras el coste taker sigue siendo > 0.
+4. **Protección inmediata:** con la primera ejecución parcial se coloca el **stop en el exchange** (orden stop por *mark price*, reduce-only). Objetivos como límites reduce-only (TP1 50 %, TP2 resto). Mover el stop a break-even tras TP1 *(decisión de Claude, configurable por estrategia)*.
+5. **Watchdog:** si una posición pasa > 5 s sin stop confirmado en el exchange, se cierra a mercado y se alerta.
+6. **Limitador** centralizado por endpoint con margen del 50 % sobre los límites publicados; backoff exponencial ante 429/5xx.
+7. **Spot** usa el mismo flujo, sin apalancamiento ni liquidación y solo en largo. **Problema conocido:** es probable que la API spot v3 de MEXC **no acepte órdenes stop ni OCO** [VERIFICAR F0]. En ese caso, la regla "stop siempre en el exchange" no se puede cumplir en spot, y se aplica esta excepción documentada:
+   - **stop por software** vigilado por el motor y por el watchdog;
+   - motor obligatoriamente en el VPS (no en el Mac);
+   - solo modos Escudo/Normal;
+   - riesgo por operación reducido a la mitad, por el riesgo de gap o de caída del motor.
+
+   El dueño debe aceptar esta excepción antes de operar spot real.
+
+---
+
+## 11. Integración con TradingView
+
+- **Endpoint:** `POST https://<túnel>/tv/<ruta-secreta-aleatoria>`.
+- **Túnel:** Cloudflare Tunnel *(decisión de Claude; ngrok es la alternativa)*. Detrás del túnel, la IP real llega en `CF-Connecting-IP` y se comprueba contra las 4 IPs de TradingView.
+- **Respuesta en < 100 ms:** se valida el esquema, se encola, se responde `200`. El procesamiento sigue en asíncrono (límite de 3 s de TradingView).
+- **Mensaje de alerta:** lo construye **el propio script Pine** con `alert()` (mensaje dinámico), no una plantilla fija, para poder enviar stop y objetivos calculados. Ejemplo de lo que genera:
+```json
+{
+  "secret": "<cadena literal generada en la F3 y pegada en el script/alerta>",
+  "alert_id": "tv_mi_estrategia_v1-BTCUSDT.P-1729700000000",
+  "strategy_id": "tv_mi_estrategia_v1",
+  "symbol": "BTCUSDT.P",
+  "tf": "15",
+  "action": "entry",
+  "side": "long",
+  "price": 67250.5,
+  "stop": 66900.0,
+  "targets": [67950.0, 68600.0],
+  "ts": "2026-10-23T14:15:00Z"
+}
+```
+  - `secret` es un **texto literal** (TradingView no tiene variables secretas). Se rota si se filtra.
+  - `alert_id` = estrategia + ticker + `time` de la vela, construido en Pine; sirve para deduplicar.
+  - **Mapeo de símbolos:** TradingView usa nombres como `BTCUSDT.P` (perpetuo) o `BTCUSDT` (spot). Una tabla en `config/symbols.yaml` los traduce a los símbolos de MEXC (p. ej. `BTC_USDT` en futuros) y decide el mercado.
+  - Para alertas de *strategies* de Pine, se pueden usar los placeholders `{{strategy.order.*}}`. Para *indicators*, solo `alert()` con mensaje dinámico.
+- **Reglas:**
+  - `secret` comparado en tiempo constante.
+  - `alert_id` deduplicado durante 24 h.
+  - El símbolo debe estar en la lista permitida.
+  - Se descarta si `ts` tiene más de 30 s de antigüedad.
+  - **Una alerta de TradingView es un `Setup` más:** pasa por Simulación y Riesgo como cualquier otro, nunca va directa a Ejecución.
+
+---
+
+## 12. Departamentos como agentes de Claude Code
+
+**Estructura:**
+- `.claude/agents/`: `director.md`, `datos.md`, `analista.md`, `contexto.md`, `estratega.md`, `simulador.md`, `riesgo.md`, `ejecucion.md`, `monitor.md`, `graficos.md`, `auditor.md`. Cada uno incluye su rol, sus herramientas permitidas, los comandos `tradesys` que puede usar y **lo que tiene prohibido**.
+- `.claude/skills/` (comandos del dueño):
+
+| Comando | Qué hace |
+|---|---|
+| `/briefing` | Estado del mercado, régimen, modo y meta semanal |
+| `/analizar <par>` | Análisis multi-timeframe con gráfico |
+| `/escanear` | Setups activos en todo el universo |
+| `/simular <setup>` | Abanico y probabilidades |
+| `/laboratorio <estrategia>` | Corre el embudo G1–G5 |
+| `/riesgo` | Estado de los buckets, modos y disyuntores |
+| `/operar <setup>` | Genera el ticket y pide "sí" en modo L2 |
+| `/diario` | Resumen del diario |
+| `/semana` | Informe semanal |
+| `/kill` | Botón de emergencia |
+
+**Barreras técnicas (no dependen de que el agente "se porte bien"):**
+- Hook `PreToolUse` en `.claude/settings.json`: bloquea cualquier comando que invoque la ejecución real (`tradesys exec live …`) si no viene del flujo `/operar` con un ticket `PASS` vigente, y bloquea editar `config/risk.yaml` y `config/gates.yaml` sin confirmación.
+- Las claves de MEXC nunca están en variables visibles para Claude: el proceso del motor las lee del Llavero de macOS.
+- El agente "director" no tiene permiso de ejecución; solo coordina y explica.
+
+**Niveles de autonomía:**
+
 | Nivel | Comportamiento |
 |---|---|
-| L0 Analista | Solo analiza y simula. Sin órdenes. |
-| L1 Papel | Opera en simulación con datos en vivo. |
-| L2 Copiloto | Propone cada operación por Telegram; ejecuta solo tras "sí" para **ese** ticket (como la referencia). |
-| L3 Piloto automático | Ejecuta solo las estrategias que pasaron G7, dentro de los límites duros. Avisa de todo. |
+| L0 Analista | Solo analiza y simula |
+| L1 Papel | Opera en simulación con datos en vivo, 24/7 |
+| L2 Copiloto | Cada operación real necesita `/si <ticket>` en Telegram o "sí" en Claude, para ese ticket (como en la referencia) |
+| L3 Automático | Solo estrategias en G8, dentro de modos y disyuntores; el dueño recibe todo por Telegram |
 
 ---
 
-## 8. Logística: qué necesitas tener listo en el Mac
+## 13. Operación en el Mac (24/7, seguridad, recuperación)
 
-### Checklist del dueño (antes de ejecutar)
-- [ ] Mac con macOS actualizado; saber si es Apple Silicon (M1–M4) o Intel.
-- [ ] Instalados: Homebrew, Git, Python 3.12 (vía `uv`), VS Code (opcional).
-- [ ] Claude Code instalado en el Mac y este repo clonado.
-- [ ] Cuenta MEXC verificada (KYC) + **subcuenta** para el bot.
-- [ ] Clave API de MEXC: lectura + trading, **sin retiros**, con IP fija si es posible.
-- [ ] Plan de TradingView con webhooks (Essential o superior).
-- [ ] Bot de Telegram creado (BotFather) + tu chat ID.
-- [ ] Cuenta gratuita de Cloudflare (para el túnel) o ngrok.
-- [ ] Respuestas a las preguntas de §10.
+- **Procesos** (agentes `launchd` en `~/Library/LaunchAgents/`, con `KeepAlive`): `tradesys-data`, `tradesys-engine`, `tradesys-webhook`, `tradesys-monitor`, `cloudflared`.
+- **Energía:** `sudo pmset -c sleep 0 disksleep 0` con el cargador conectado. Con la tapa cerrada (portátil), solo funciona con monitor externo; recomendado Mac de sobremesa o mini.
+- **Logs:** `~/tradesys/logs/` rotados. El panel muestra el estado de cada proceso.
+- **Recuperación tras caída o reinicio:** al arrancar, reconciliación (§10.1). Las posiciones abiertas mantienen su stop en el exchange aunque el Mac esté apagado; esa es la razón del stop en el exchange.
+- **Seguridad:**
+  - Clave API de MEXC **sin retiros**, solo lectura + trading, en una **subcuenta** dedicada con solo el capital del bot.
+  - **IP en lista blanca:** con IP doméstica dinámica no es viable de forma fiable; por eso el motor pasa a un VPS con IP fija en la Fase 4. MEXC puede imponer caducidad a claves sin IP vinculada [VERIFICAR F0].
+  - Secretos en el Llavero (`keyring`); `.env` y `data/` en `.gitignore`; escaneo de secretos (`gitleaks`) en el hook de pre-commit.
+  - Telegram: el bot solo responde al chat ID del dueño.
+  - 2FA en MEXC, TradingView, GitHub y Cloudflare.
+- **Copias:** el diario y la configuración se copian a diario (Time Machine + copia cifrada opcional).
 
-### Fases de ejecución
-| Fase | Contenido | Entregable | Nivel |
+### 13.1 Reparto Mac / VPS desde la Fase 4
+| Dónde | Qué corre | Secretos |
+|---|---|---|
+| **VPS** (Linux, IP fija, `systemd`) | Datos en vivo, Estrategia, Simulación por setup, Riesgo, Ejecución, Monitoreo/Telegram, receptor de webhooks, diario de producción | Clave MEXC con IP vinculada a la del VPS, en un fichero cifrado (`systemd-creds` o `age`), legible solo por el usuario del servicio. Nunca en git. |
+| **Mac** | Claude Code y sus agentes, Laboratorio (backtests, walk-forward, Monte Carlo), panel, copia del diario | Sin clave de trading de MEXC: si acaso, una clave **solo lectura** para datos. |
+
+- **Confirmaciones en L2:** la autoridad es **Telegram** (`/si <ticket>`), que llega directo al VPS. Desde Claude en el Mac, `/operar` llama a la **API de control del VPS** (HTTPS por el túnel, con token propio de solo-control) para crear el ticket; la confirmación final sigue siendo `/si` en Telegram.
+- **Hooks de Claude:** siguen en el Mac y bloquean llamar a la API de control para cosas distintas de crear tickets, pausar o hacer KILL. La API de control **no permite** cambiar `risk.yaml`: eso se hace con commit + despliegue revisado.
+- **Despliegue:** `git pull` + reinicio del servicio desde una etiqueta aprobada. El VPS nunca ejecuta código sin commit.
+
+---
+
+## 14. Estrategia de pruebas
+
+| Tipo | Qué cubre |
+|---|---|
+| Unitarias (`pytest`) | Cada indicador, la fórmula de tamaño, la liquidación, Kelly, cada regla de PASS/BLOCK, cada transición de modo |
+| Propiedades (`hypothesis`) | "El riesgo real nunca supera el permitido"; "nunca existe una posición sin stop"; "nunca se mira al futuro" |
+| Golden | Indicadores frente a CSV exportados de TradingView (error < 0,1 %) |
+| Replay | Sesiones grabadas de WebSocket reproducidas por el motor completo; resultado idéntico entre ejecuciones |
+| Caos | Desconexión de WS, 429/5xx, ejecución parcial, stop rechazado, reinicio con posición abierta, reloj desviado |
+| Integración (opt-in) | Contra MEXC real con tamaño mínimo; solo se ejecutan con `TS_LIVE_TESTS=1` y confirmación |
+| Contrato de webhook | Mensajes válidos, inválidos, duplicados, antiguos, de IP no permitida |
+
+Regla: **ningún test por defecto toca la red ni dinero**. Toda la suite corre offline con fixtures, como en la referencia.
+
+---
+
+## 15. Fases, tareas y criterios de aceptación
+
+Cada fase termina con: tests en verde, demostración en vivo al dueño y su aprobación para pasar a la siguiente. Varias partes de una fase se construyen en paralelo con agentes (un agente por departamento independiente), con revisión de código antes de integrar.
+
+| Fase | Tareas principales | Criterio de aceptación | Autonomía |
 |---|---|---|---|
-| **0 Preparación** | Instalar entorno, guardar claves en el Llavero, verificar API MEXC (spot y futuros: crear y cancelar una orden mínima), fijar límites de riesgo. | `make doctor` en verde; informe "qué permite tu API". | — |
-| **1 Datos + Gráficos** | Dept. 1, 2, 9: descarga histórica, WS en vivo, indicadores verificados contra TradingView, primer Pine Script, panel. | Gráficos propios = TradingView (diferencia < 0,1 %). | L0 |
-| **2 Laboratorio** | Dept. 3, 4, 5: contexto, estrategias candidatas, backtest, walk-forward, Monte Carlo, estrés. | Fichas de estrategia con estado G0–G5. | L0 |
-| **3 Riesgo + Papel** | Dept. 6, 7 (modo papel), 8, 10; receptor de webhooks de TradingView. | Bot en papel 24/7 con alertas en Telegram y diario. | L1 |
-| **4 Copiloto** | Ejecución real en MEXC con confirmación por ticket; capital mínimo. | Primeras operaciones reales auditadas. | L2 |
-| **5 Autónomo + VPS** | Migrar el motor a VPS; piloto automático solo para estrategias G7. | Sistema 24/7 con kill switch probado. | L3 |
-| **Continuo** | Revisión semanal del Dept. 10; nuevas hipótesis entran por G0. | Mejora iterativa. | — |
-
-Cada fase termina con: tests en verde, demostración en vivo, y tu aprobación para pasar a la siguiente.
-
-### Cómo trabajarán los "departamentos" con Claude en el Mac
-- Un subagente por departamento en `.claude/agents/` con su rol, sus herramientas y lo que **no** puede hacer (p. ej., solo Ejecución puede llamar a la API de órdenes, y solo con un `PASS` de Riesgo).
-- Comandos: `/briefing` (resumen del mercado), `/analizar BTCUSDT`, `/simular <setup>`, `/riesgo`, `/operar` (genera ticket), `/diario`, `/kill`.
-- Para construir el sistema usaremos varios agentes en paralelo por fase (uno por departamento independiente) y revisión de código antes de cada merge.
+| **F0 Preparación** | Entorno (`uv`, Python 3.12, repo, pre-commit), Llavero, `tradesys doctor`; verificar todo lo marcado [VERIFICAR F0]; prueba real de crear y cancelar una orden mínima en spot y futuros; fijar `risk.yaml` con el dueño | `doctor` en verde; informe "qué permite tu cuenta MEXC" con comisiones, mínimos, modos y límites reales | — |
+| **F1 Datos + Gráficos** | Dept. 1, 2 y 9: descarga histórica, WS en vivo, calidad, indicadores con golden tests, clasificador de régimen, Pine `TS-Regime`/`TS-Structure`, prototipo de panel | 12 meses de datos del universo; golden tests < 0,1 %; panel mostrando velas, régimen y estructura en vivo | L0 |
+| **F2 Laboratorio** | Dept. 3, 4 y 5: contexto, 5 estrategias candidatas, backtest event-driven, walk-forward, robustez, DSR/PBO, Monte Carlo, estrés, informes | Fichas de las 5 candidatas con veredicto G1–G5 y evidencia; al menos 1 estrategia que pase G5 (si ninguna pasa, se itera G0 y **no se avanza**) | L0 |
+| **F3 Riesgo + Papel 24/7** | Dept. 6, 7 (`PaperBroker`), 8 y 10; receptor de webhooks + Cloudflare Tunnel; Telegram; `launchd`; hooks de Claude | 2–4 semanas en papel 24/7 sin caídas sin explicar; KILL probado; estrategias evaluadas en G6 | L1 |
+| **F4 Copiloto real** | `MexcBroker`, maker-first, stops en el exchange, watchdog, reconciliación; migración del motor a VPS con IP fija | Primeras ≥ 30 operaciones reales con tamaño mínimo y confirmación por ticket; cero posiciones sin stop; G7 evaluado | L2 |
+| **F5 Automático + Ataque** | Habilitar L3 y modos Ataque/Turbo solo para estrategias en G8; informes semanales automáticos; degradación automática | 4 semanas en L3 sin violar ninguna regla dura; informe semanal vivo frente a simulado | L3 |
+| **Continuo** | Nuevas hipótesis por G0; revisión semanal; recalibración trimestral del régimen | — | — |
 
 ---
 
-## 9. Qué queda a criterio del constructor
-- Librerías exactas de indicadores y versión de vectorbt.
-- Esquema detallado de las tablas DuckDB y del diario.
-- Diseño visual del panel.
-- Los parámetros concretos de cada estrategia (los decide el embudo, no nosotros a ojo).
+## 16. Logística: checklist del dueño y costes
+
+### 16.1 Antes de la Fase 0
+- [ ] Mac (modelo: Apple Silicon M1–M4 o Intel), macOS actualizado, ≥ 50 GB libres para datos.
+- [ ] Homebrew, Git y Claude Code instalados; este repo clonado.
+- [ ] Repo privado propio creado en GitHub (pendiente: `mexc-trading-system`).
+- [ ] Cuenta MEXC con KYC + **subcuenta** para el bot + 2FA.
+- [ ] Clave API de la subcuenta: lectura + trading, **sin retiros** (se crea en la F0 junto con Claude; nunca se pega en el chat).
+- [ ] Comprobar que MEXC y sus futuros están permitidos en tu país de residencia.
+- [ ] TradingView con plan que incluya webhooks (Essential o superior) + 2FA.
+- [ ] Bot de Telegram (BotFather) + tu chat ID.
+- [ ] Cuenta gratuita de Cloudflare.
+- [ ] Respuestas a §19.
+
+### 16.2 Costes recurrentes (aproximados; confirmar precios actuales)
+| Concepto | Necesario desde |
+|---|---|
+| TradingView con webhooks | F3 |
+| VPS con IP fija (aprox. 5–15 USD/mes) | F4 |
+| Claude (tu suscripción actual) | F0 |
+| Datos opcionales de liquidaciones/noticias | F2, si se decide |
+| Comisiones de trading | F4 (las controla el Dept. 5/7) |
 
 ---
 
-## 10. Preguntas abiertas para el dueño (necesarias antes de la Fase 0)
-1. **Autonomía final:** ¿hasta qué nivel quieres llegar (L2 copiloto o L3 automático)?
-2. **Mercado:** ¿spot, futuros perpetuos o ambos? ¿Apalancamiento máximo que aceptas?
-3. **Capital:** 500 $ iniciales, objetivo +800–1000 $/semana (confirmado). ¿Qué reparto base/ataque (propuesta 70/30)? ¿Cuánto aceptas perder entero antes de parar todo?
-4. **Pares:** ¿BTC/ETH solamente, top 20, o también altcoins pequeñas?
-5. **Estilo y temporalidad:** ¿scalping (minutos), intradía (horas) o swing (días)?
-6. **TradingView:** ¿qué plan tienes? ¿Tienes ya indicadores o estrategias Pine propias que quieras integrar?
-7. **Mac:** ¿qué modelo? ¿Puede quedarse encendido 24/7 o prefieres un VPS desde el principio?
+## 17. Riesgos del proyecto y mitigaciones
+
+| Riesgo | Mitigación |
+|---|---|
+| Ninguna estrategia demuestra ventaja suficiente para el objetivo | El embudo lo detecta **antes** de perder dinero; se sigue en papel e investigando. El objetivo se reporta, no se fuerza. |
+| La API de futuros de MEXC no permite órdenes | Se verifica en F0; se empieza en spot (sin cortos ni apalancamiento) y se reevalúa. |
+| Sobreoptimización | Walk-forward, DSR, PBO, robustez, papel obligatorio y degradación automática. |
+| Caída del Mac o de la red con posición abierta | Stop siempre en el exchange; VPS desde F4; watchdog y alertas. |
+| Robo o fuga de claves | Sin retiros, subcuenta, Llavero, IP fija en VPS, gitleaks. |
+| Error de programación que dispara órdenes | Separación de poderes, ticket firmado con caducidad, hooks, tests de propiedades, tamaño mínimo en G7. |
+| Cambios de la API de MEXC (como el de ene-2026) | Capa de adaptador única, tests de contrato y suscripción a los anuncios de API de MEXC. |
+| Comisiones y slippage se comen la ventaja | Maker-first, coste modelado en G1 y comparado con el real en G6/G7. |
 
 ---
 
-*Aviso: este sistema es una herramienta. No garantiza beneficios; los mercados cripto con apalancamiento pueden hacer perder todo el capital asignado. Las puertas de validación existen para reducir ese riesgo, no para eliminarlo.*
+## 18. Lo que queda a criterio del constructor
+- Versiones exactas de librerías; elección final entre Streamlit y FastAPI + Lightweight Charts tras el prototipo de F1.
+- Esquema físico de las tablas y particiones.
+- Diseño visual del panel y de los mensajes de Telegram.
+- Los parámetros concretos de cada estrategia (los decide el embudo, no se eligen a ojo).
+- Fuente concreta del calendario macro.
+
+---
+
+## 19. Preguntas abiertas para el dueño (antes de la Fase 0)
+1. **Pérdida máxima asumible frente al objetivo:** de los 500 USDT, ¿cuánto aceptas perder entero antes de que todo se pare y revisemos? Con 150 USDT (30 %) el +800/semana es la excepción (§2.1). Cuanto más pongas en el bucket de ataque, más cerca del objetivo y más se puede perder.
+2. **Reparto base/ataque:** depende de la respuesta anterior (propuesta inicial 70/30).
+3. **Mercado:** ¿futuros perpetuos, spot o ambos? ¿Apalancamiento máximo absoluto que aceptas (propuesta: 20x solo en Turbo)?
+4. **Autonomía final:** ¿hasta L2 (copiloto) o L3 (automático)?
+5. **Pares:** ¿solo BTC/ETH, el top 10 o un universo más amplio?
+6. **Estilo:** el objetivo pide scalping/intradía activo; ¿cuántas horas al día podrás mirar Telegram para confirmar en L2?
+7. **TradingView:** ¿qué plan tienes? ¿Tienes indicadores o estrategias Pine propias que integrar?
+8. **Mac:** ¿modelo? ¿Puede estar encendido 24/7? ¿Aceptas VPS desde la Fase 4?
+9. **País de residencia y zona horaria** (acceso a MEXC y horario de los informes).
+10. **Trinquete:** las ganancias que pasan del bucket de ataque, ¿a la base o retiradas fuera de MEXC?
+
+---
+
+## 20. Glosario
+- **R:** riesgo de una operación. Ganar "2R" = ganar el doble de lo arriesgado.
+- **Edge / ventaja:** expectativa positiva demostrada tras costes.
+- **Kelly:** fórmula del tamaño de apuesta óptimo según la ventaja. Usamos la mitad y sobre la estimación pesimista.
+- **Maker / taker:** maker añade liquidez al libro (orden límite que espera); taker la quita (se ejecuta al instante). En MEXC futuros, maker ≈ 0 %.
+- **Funding:** pago periódico entre largos y cortos en perpetuos.
+- **OI (open interest):** contratos abiertos en total.
+- **CVD / delta:** volumen comprador menos vendedor (por vela / acumulado).
+- **BOS / CHoCH:** rotura de estructura / cambio de carácter (estructura de mercado).
+- **Walk-forward:** optimizar en el pasado y probar en el periodo siguiente que no se vio.
+- **DSR / PBO:** pruebas estadísticas que penalizan haber probado muchas variantes.
+- **Margen aislado:** cada posición solo puede perder su propio margen.
+
+---
+
+## 21. Fuentes
+- [Anuncios de API de MEXC (cambio de dominio de futuros, ene-2026)](https://www.mexc.com/bn-BD/announcements/api-updates)
+- [MEXC: ajuste del límite de órdenes spot por API (mar-2025)](https://www.mexc.com/ru-RU/announcements/article/mexc-to-adjust-api-spot-order-rate-limit-effective-mar-25-2025-17827791522801)
+- [MEXC: guía de comisiones 2026](https://www.mexc.com/ru-RU/crypto-pulse/article/mexc-trading-fees-complete-guide-39643)
+- [Datawallet: comisiones MEXC (ES)](https://www.datawallet.com/es/cripto/mexc-fees)
+- [MEXC help center: reglas de orden mínima](https://www.mexc.com/learn/article/17827791510411)
+- [CCXT vs MEXC API](https://docs.ccxt.com/docs/comparisons/ccxt-vs-mexc-api)
+- [ccxt: error 7002 en MEXC swap](https://lightrun.com/answers/ccxt-ccxt-mexc-swap-error-code-7002)
+- [TradingView: cómo configurar alertas webhook](https://www.tradingview.com/support/solutions/43000529348-webhooks)
+- [PickMyTrade: IPs de webhooks de TradingView](https://blog.pickmytrade.io/how-to-allowlist-tradingviews-4-webhook-ips/)
+- [TechBullion: TradingView → MEXC futuros 2026](https://techbullion.com/how-to-automate-tradingview-strategies-to-mexc-futures-in-2026/)
+
+---
+
+*Aviso: este sistema es una herramienta, no un consejo financiero. No garantiza beneficios. El trading de cripto con apalancamiento puede hacer perder todo el capital asignado. El embudo y el motor de riesgo existen para reducir ese riesgo, no para eliminarlo.*
