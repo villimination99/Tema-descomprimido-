@@ -1,0 +1,714 @@
+<title>Sala de Mando</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: consola de instrumentos — una columna ancha con "paneles" de cabina; números en mono, titulares en Archivo condensado. */
+:root{
+  --bg:#0d1422; --panel:#141e30; --panel-2:#1a2740; --line:#26344f;
+  --fg:#e7ecf5; --muted:#93a2bd; --faint:#5f6f8c;
+  --gold:#f2b24a; --gold-soft:rgba(242,178,74,.14);
+  --gain:#35c2a6; --loss:#ef6a55; --warn:#e8c14f; --info:#7aa6ff;
+  --f-display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --r:10px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#f3f5f9; --panel:#ffffff; --panel-2:#eef2f8; --line:#d6deea;
+  --fg:#131c2e; --muted:#53627d; --faint:#8592a8;
+  --gold:#b9750f; --gold-soft:rgba(185,117,15,.12);
+  --gain:#0f8f78; --loss:#c8432e; --warn:#a67c00; --info:#2f5fd0;
+  color-scheme:light;
+}}
+:root[data-theme="light"]{
+  --bg:#f3f5f9; --panel:#ffffff; --panel-2:#eef2f8; --line:#d6deea;
+  --fg:#131c2e; --muted:#53627d; --faint:#8592a8;
+  --gold:#b9750f; --gold-soft:rgba(185,117,15,.12);
+  --gain:#0f8f78; --loss:#c8432e; --warn:#a67c00; --info:#2f5fd0;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--f-body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:1120px;margin:0 auto;padding-block:28px 64px;display:grid;gap:56px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.05}
+h1{font-size:clamp(2.6rem,7vw,5.2rem);font-weight:850;font-stretch:72%;letter-spacing:-.01em}
+h2{font-size:clamp(1.7rem,3.6vw,2.5rem);font-weight:800;font-stretch:78%}
+h3{font-size:1.1rem;font-weight:700;font-stretch:90%}
+p{margin:0;max-width:68ch}
+.eyebrow{font:600 .72rem/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.muted{color:var(--muted)}
+.mono,.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+section{display:grid;gap:20px}
+.head{display:grid;gap:10px}
+.demo-tag{display:inline-flex;gap:6px;align-items:center;font:600 .68rem/1 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--warn);border:1px dashed var(--warn);border-radius:999px;padding:5px 10px;width:max-content}
+
+/* ---------- top bar ---------- */
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+  font:500 .78rem/1 var(--f-mono);color:var(--muted)}
+.top .brand{display:flex;gap:10px;align-items:center;color:var(--fg);font-weight:600;letter-spacing:.06em}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--gain);box-shadow:0 0 0 4px color-mix(in srgb,var(--gain) 22%,transparent)}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:999px;padding:6px 10px;white-space:nowrap}
+
+/* ---------- hero ---------- */
+.hero{display:grid;grid-template-columns:1.05fr 1fr;gap:28px;align-items:center}
+.hero-text{display:grid;gap:18px;min-width:0}
+.hero h1 em{font-style:normal;color:var(--gold)}
+.hero-figs{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.fig{background:var(--panel);padding:14px 14px 12px;display:grid;gap:4px}
+.fig b{font:600 1.5rem/1 var(--f-mono)}
+.fig span{font-size:.78rem;color:var(--muted)}
+.scope{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px;display:grid;gap:8px;min-width:0}
+.scope canvas{width:100%;height:auto;aspect-ratio:16/10;display:block;max-width:100%}
+.scope-legend{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font:500 .72rem/1.3 var(--f-mono);color:var(--muted)}
+
+/* ---------- capital ---------- */
+.capital{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px;display:grid;gap:14px;min-width:0}
+.vault{display:grid;grid-template-columns:110px 1fr;gap:20px;align-items:stretch}
+.gauge{position:relative;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);min-height:230px;overflow:hidden}
+.gauge .fill{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(to top,color-mix(in srgb,var(--gold) 55%,transparent),var(--gold-soft));transition:height .5s}
+.gauge .floor{position:absolute;left:0;right:0;border-top:2px dashed var(--loss)}
+.gauge .floor span{position:absolute;right:6px;top:-18px;font:600 .66rem/1 var(--f-mono);color:var(--loss)}
+.gauge .lvl{position:absolute;left:8px;font:600 .8rem/1 var(--f-mono)}
+.rules{display:grid;gap:10px;align-content:start}
+.rule{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:baseline}
+.rule .k{font:600 .95rem/1 var(--f-mono);color:var(--gold);min-width:64px}
+.flows{display:grid;gap:10px}
+.flow{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;font-size:.85rem}
+.flow .box{border:1px solid var(--line);border-radius:8px;padding:8px 10px;text-align:center;background:var(--panel-2)}
+.flow .arrow{font:600 .75rem/1.2 var(--f-mono);color:var(--gain);text-align:center}
+.flow .arrow.back{color:var(--gold)}
+.bolsa-note{font-size:.85rem;color:var(--muted)}
+
+/* ---------- departments ---------- */
+.depts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.dept{all:unset;cursor:pointer;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px;display:grid;gap:6px;min-height:92px;align-content:start;transition:border-color .2s,transform .2s}
+.dept:hover{border-color:var(--faint);transform:translateY(-1px)}
+.dept:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.dept[aria-pressed="true"]{border-color:var(--gold);background:var(--gold-soft)}
+.dept .n{font:600 .7rem/1 var(--f-mono);color:var(--faint)}
+.dept .t{font:700 .98rem/1.15 var(--f-display);font-stretch:88%}
+.dept.veto .n{color:var(--loss)}
+.dept-detail{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:grid;gap:6px;min-height:96px}
+.pipeline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font:500 .76rem/1 var(--f-mono);color:var(--muted)}
+.pipeline b{color:var(--fg);font-weight:600;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--panel)}
+.pipeline b.v{border-color:var(--loss);color:var(--loss)}
+
+/* ---------- gate ---------- */
+.gate{display:grid;grid-template-columns:.95fr 1.05fr;gap:16px}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+.field{display:grid;gap:6px;min-width:0}
+.field label{font:600 .7rem/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.field input,.field select{width:100%;background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:9px 10px;font:500 .95rem var(--f-mono)}
+.field input:focus-visible,.field select:focus-visible,button:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.verdict{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.pill{font:800 1.4rem/1 var(--f-display);font-stretch:80%;letter-spacing:.04em;padding:10px 18px;border-radius:999px;border:2px solid currentColor}
+.pill.pass{color:var(--gain)}.pill.block{color:var(--loss)}
+.checks{list-style:none;margin:0;padding:0;display:grid;gap:2px;counter-reset:c}
+.checks li{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:baseline;padding:7px 8px;border-radius:6px;font-size:.88rem}
+.checks li::before{counter-increment:c;content:counter(c);font:600 .7rem/1 var(--f-mono);color:var(--faint);text-align:right}
+.checks li .s{font:600 .75rem/1 var(--f-mono)}
+.checks li.ok .s{color:var(--gain)}
+.checks li.ko{background:color-mix(in srgb,var(--loss) 12%,transparent)}
+.checks li.ko .s{color:var(--loss)}
+.checks li.skip{opacity:.45}
+.ticket{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.ticket div{background:var(--panel-2);padding:10px;display:grid;gap:3px}
+.ticket span{font:600 .64rem/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.ticket b{font:600 1.02rem/1.1 var(--f-mono)}
+
+/* ---------- war room ---------- */
+.war{display:grid;grid-template-columns:1.35fr .65fr;gap:16px}
+.war canvas{width:100%;aspect-ratio:16/9;height:auto;display:block;max-width:100%;background:var(--panel-2);border-radius:8px}
+.bars{display:grid;gap:10px;align-content:start}
+.bar{display:grid;gap:5px}
+.bar .lbl{display:flex;justify-content:space-between;gap:8px;font-size:.86rem}
+.bar .lbl b{font:600 .86rem var(--f-mono)}
+.bar .track{height:8px;border-radius:99px;background:var(--panel-2);overflow:hidden}
+.bar .track i{display:block;height:100%;border-radius:99px;transition:width .6s}
+.bar small{color:var(--muted);font-size:.76rem;line-height:1.35}
+.btn{all:unset;cursor:pointer;font:700 .9rem/1 var(--f-display);font-stretch:90%;letter-spacing:.03em;padding:11px 16px;border-radius:8px;background:var(--gold);color:#16120a;text-align:center}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.btn:hover{filter:brightness(1.06)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.kpi{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.kpi div{background:var(--panel-2);padding:10px;display:grid;gap:3px}
+.kpi span{font:600 .64rem/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.kpi b{font:600 1.15rem var(--f-mono)}
+
+/* ---------- modes ---------- */
+.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.mode{border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:10px;background:var(--panel);align-content:start}
+.mode .top2{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.mode h3{font-size:1.25rem}
+.mode .where{font:600 .64rem/1.2 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--faint);text-align:right}
+.mode dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:.85rem}
+.mode dt{color:var(--muted)}.mode dd{margin:0;font-family:var(--f-mono);text-align:right}
+.mode p{font-size:.84rem;color:var(--muted)}
+.mode.shield{border-top:3px solid var(--info)}.mode.normal{border-top:3px solid var(--gain)}
+.mode.attack{border-top:3px solid var(--gold)}.mode.turbo{border-top:3px solid var(--loss)}
+
+/* ---------- funnel ---------- */
+.funnel{display:grid;gap:6px}
+.gstep{display:grid;grid-template-columns:54px 1fr;gap:14px;align-items:center}
+.gstep .g{font:700 .95rem/1 var(--f-mono);color:var(--gold);text-align:right}
+.gstep .b{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.gstep .b strong{font-family:var(--f-display);font-stretch:88%}
+.gstep .b span{color:var(--muted);font-size:.86rem}
+.gstep.money .b{border-color:var(--gold);background:var(--gold-soft)}
+
+/* ---------- strategies ---------- */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:.88rem}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 .68rem/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--panel-2)}
+td{background:var(--panel)}
+tr:last-child td{border-bottom:0}
+td .id{font:700 .9rem var(--f-mono);color:var(--gold)}
+.tag{display:inline-block;font:600 .66rem/1 var(--f-mono);padding:4px 7px;border-radius:5px;border:1px solid var(--line);margin:0 4px 4px 0;white-space:nowrap}
+
+/* ---------- roadmap ---------- */
+.road{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.ph{border:1px solid var(--line);border-radius:var(--r);padding:14px;display:grid;gap:8px;background:var(--panel);align-content:start}
+.ph .st{font:600 .64rem/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase}
+.ph.done{border-color:var(--gain)}.ph.done .st{color:var(--gain)}
+.ph.next{border-color:var(--gold);background:var(--gold-soft)}.ph.next .st{color:var(--gold)}
+.ph .st.later{color:var(--faint)}
+.ph h3{font-size:1rem}
+.ph p{font-size:.82rem;color:var(--muted)}
+
+/* ---------- checklist ---------- */
+.check{display:grid;gap:8px}
+.check label{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:start;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;cursor:pointer}
+.check input{width:18px;height:18px;accent-color:var(--gold);margin-top:2px}
+.check code{font:500 .82rem var(--f-mono);background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;overflow-wrap:anywhere}
+.check label:has(input:checked) span{color:var(--muted);text-decoration:line-through}
+.progress{font:600 .8rem var(--f-mono);color:var(--gold)}
+
+/* ---------- target table ---------- */
+.target{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tcard{border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--panel);display:grid;gap:6px}
+.tcard b{font:700 2rem/1 var(--f-mono)}
+.tcard small{color:var(--muted)}
+
+footer{color:var(--faint);font-size:.8rem;display:grid;gap:6px;border-top:1px solid var(--line);padding-top:18px}
+
+@media (max-width:900px){
+  .hero,.capital,.gate,.war{grid-template-columns:1fr}
+  .modes{grid-template-columns:1fr 1fr}
+  .road{grid-template-columns:repeat(3,1fr)}
+}
+@media (max-width:560px){
+  .form{grid-template-columns:1fr}
+  .modes,.road,.target{grid-template-columns:1fr}
+  .ticket{grid-template-columns:1fr 1fr}
+  .vault{grid-template-columns:84px 1fr}
+  .hero-figs{grid-template-columns:1fr 1fr 1fr}
+  .fig b{font-size:1.15rem}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand"><span class="dot" aria-hidden="true"></span>TRADESYS · MEXC + TRADINGVIEW</div>
+    <div class="chips">
+      <span class="chip">Fase 0 lista · 153 tests</span>
+      <span class="chip">Modo actual: papel</span>
+      <span class="chip">Horas en UTC</span>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero" aria-labelledby="t-hero">
+    <div class="hero-text">
+      <span class="eyebrow">Sala de Mando</span>
+      <h1 id="t-hero">Primero no perder. <em>Después, dejar correr.</em></h1>
+      <p class="muted">Nuestro propio sistema de trading para MEXC. Diez departamentos analizan, simulan y vigilan cada operación. Ninguna orden sale sin pasar la puerta de riesgo, y el capital inicial tiene un suelo que nadie puede atravesar.</p>
+      <div class="hero-figs" role="list">
+        <div class="fig" role="listitem"><b class="num">500</b><span>USDT protegidos</span></div>
+        <div class="fig" role="listitem"><b class="num" style="color:var(--loss)">450</b><span>suelo · HALT total</span></div>
+        <div class="fig" role="listitem"><b class="num">1 %</b><span>riesgo máx. por operación</span></div>
+      </div>
+    </div>
+    <div class="scope" aria-label="Abanico de escenarios en vivo, demostración">
+      <canvas id="heroCanvas" width="800" height="500"></canvas>
+      <div class="scope-legend"><span>BTC_USDT · 15m · abanico de 10 000 caminos (muestra)</span><span class="demo-tag">datos simulados</span></div>
+    </div>
+  </section>
+
+  <!-- CAPITAL -->
+  <section aria-labelledby="t-cap">
+    <div class="head">
+      <span class="eyebrow">El capital</span>
+      <h2 id="t-cap">Dos bolsillos: uno que no se toca y otro hecho de ganancias</h2>
+      <p class="muted">El capital inicial solo opera en modos prudentes. El modo agresivo solo puede usar dinero ya ganado, así que perderlo nunca toca los 500 iniciales.</p>
+    </div>
+    <div class="capital">
+      <div class="panel">
+        <h3>Capital protegido</h3>
+        <div class="vault">
+          <div class="gauge" aria-hidden="true">
+            <div class="fill" style="height:calc(500/560*100%)"></div>
+            <div class="floor" style="bottom:calc(450/560*100%)"><span>450</span></div>
+            <div class="lvl num" style="bottom:calc(500/560*100% + 6px)">500</div>
+          </div>
+          <div class="rules">
+            <div class="rule"><span class="k">1 %</span><span>riesgo máximo por operación en modo Normal (5 USDT). En Escudo, 0,25 %.</span></div>
+            <div class="rule"><span class="k">−2 %</span><span>en el día: pausa hasta las 00:00 UTC.</span></div>
+            <div class="rule"><span class="k">−4 %</span><span>en la semana: pausa hasta que lo revises tú.</span></div>
+            <div class="rule"><span class="k">450</span><span>suelo absoluto: todo se detiene. Lo peor posible son −50 USDT.</span></div>
+            <div class="rule"><span class="k">vivo</span><span>cada orden nueva solo puede arriesgar lo que queda antes del suelo y de los límites del día, restando el riesgo ya abierto.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Bolsa de ganancias</h3>
+        <div class="flows">
+          <div class="flow"><div class="box">Protegido</div><div class="arrow">50 % de la<br>ganancia semanal →</div><div class="box">Bolsa</div></div>
+          <div class="flow"><div class="box">Protegido</div><div class="arrow back">← trinquete<br>al duplicarse</div><div class="box">Bolsa</div></div>
+        </div>
+        <p class="bolsa-note">Solo la bolsa puede ir en Ataque o Turbo. Empieza en 0: el modo agresivo no existe hasta que se haya ganado algo. Si una pérdida supera la bolsa (un gap), el exceso se carga al protegido y el sistema exige tu revisión.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEPARTMENTS -->
+  <section aria-labelledby="t-dep">
+    <div class="head">
+      <span class="eyebrow">Los departamentos</span>
+      <h2 id="t-dep">Diez equipos, una cadena de decisión</h2>
+    </div>
+    <div class="pipeline" aria-label="Cadena de decisión">
+      <b>Datos</b>→<b>Análisis</b>→<b>Contexto</b>→<b>Estrategia</b>→<b>Simulación</b>→<b class="v">Riesgo · veto</b>→<b>Ejecución</b>→<b>Escenarios en posición</b>
+    </div>
+    <div class="depts" id="depts"></div>
+    <div class="dept-detail" id="deptDetail" aria-live="polite"></div>
+  </section>
+
+  <!-- GATE -->
+  <section aria-labelledby="t-gate">
+    <div class="head">
+      <span class="eyebrow">La puerta de riesgo</span>
+      <h2 id="t-gate">Prueba una orden: PASS o BLOCK</h2>
+      <p class="muted">Réplica simplificada del motor real en Python. Cambia los valores y mira cuál de las 11 comprobaciones la detiene y cuánto permite arriesgar.</p>
+      <span class="demo-tag">simulador · sin conexión con MEXC</span>
+    </div>
+    <div class="gate">
+      <div class="panel">
+        <form class="form" id="gateForm" autocomplete="off">
+          <div class="field"><label for="g-eq">Capital protegido</label><input id="g-eq" type="number" step="1" value="500"></div>
+          <div class="field"><label for="g-day">Pérdida de hoy</label><input id="g-day" type="number" step="0.5" value="0"></div>
+          <div class="field"><label for="g-open">Riesgo ya abierto</label><input id="g-open" type="number" step="0.5" value="0"></div>
+          <div class="field"><label for="g-mode">Modo</label><select id="g-mode"><option value="NORMAL" selected>Normal</option><option value="ESCUDO">Escudo</option></select></div>
+          <div class="field"><label for="g-entry">Entrada</label><input id="g-entry" type="number" step="0.01" value="100"></div>
+          <div class="field"><label for="g-stop">Stop</label><input id="g-stop" type="number" step="0.01" value="99"></div>
+          <div class="field"><label for="g-price">Precio actual</label><input id="g-price" type="number" step="0.01" value="100"></div>
+          <div class="field"><label for="g-q">Calidad del setup</label><select id="g-q"><option value="A+">A+</option><option value="A" selected>A</option><option value="B">B</option></select></div>
+          <div class="field"><label for="g-reg">Régimen</label><select id="g-reg"><option value="ok" selected>Tendencia (permitido)</option><option value="no">Rango (no permitido)</option></select></div>
+          <div class="field"><label for="g-exp">R esperado</label><input id="g-exp" type="number" step="0.05" value="0.4"></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="verdict"><h3>Veredicto</h3><span class="pill pass" id="pill">PASS</span></div>
+        <div class="ticket" id="ticket"></div>
+        <ol class="checks" id="checks"></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAR ROOM -->
+  <section aria-labelledby="t-war">
+    <div class="head">
+      <span class="eyebrow">Sala de guerra</span>
+      <h2 id="t-war">Entra la orden: aparecen todos los escenarios</h2>
+      <p class="muted">En cuanto se ejecuta una entrada, el motor genera miles de caminos de precio, los clasifica en seis escenarios y prepara una jugada para cada uno. Solo puede reducir el riesgo; nunca aleja el stop.</p>
+      <span class="demo-tag">demostración con caminos simulados</span>
+    </div>
+    <div class="war">
+      <div class="panel">
+        <canvas id="warCanvas" width="960" height="540" aria-label="Caminos simulados desde la entrada con stop y objetivo"></canvas>
+        <div class="row">
+          <button class="btn" id="newOrder" type="button">Nueva orden simulada</button>
+          <span class="muted mono" id="warMeta"></span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="kpi">
+          <div><span>R esperado</span><b id="expR">—</b></div>
+          <div><span>Pérdida máxima</span><b style="color:var(--loss)">−1,00 R</b></div>
+        </div>
+        <div class="bars" id="bars"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODES -->
+  <section aria-labelledby="t-modes">
+    <div class="head">
+      <span class="eyebrow">Modos de riesgo</span>
+      <h2 id="t-modes">Bajar es inmediato. Subir exige todas las condiciones.</h2>
+    </div>
+    <div class="modes">
+      <article class="mode shield"><div class="top2"><h3>Escudo</h3><span class="where">ambos bolsillos</span></div>
+        <dl><dt>Riesgo/op</dt><dd>0,25 %</dd><dt>Apalanc.</dt><dd>≤ 2x</dd><dt>Calidad</dt><dd>A+</dd></dl>
+        <p>Se activa con 2 pérdidas seguidas, −15 % desde el máximo, noticia macro, régimen caótico o sistema degradado. Dura 4 h tras el último aviso.</p></article>
+      <article class="mode normal"><div class="top2"><h3>Normal</h3><span class="where">ambos bolsillos</span></div>
+        <dl><dt>Riesgo/op</dt><dd>1 % · 2 % bolsa</dd><dt>Apalanc.</dt><dd>≤ 3x</dd><dt>Calidad</dt><dd>A o A+</dd></dl>
+        <p>El modo por defecto. Si el día va +2 %, el riesgo se reduce a la mitad; si se devuelve la mitad, se para el día.</p></article>
+      <article class="mode attack"><div class="top2"><h3>Ataque</h3><span class="where">solo bolsa</span></div>
+        <dl><dt>Riesgo/op</dt><dd>½ Kelly · ≤ 10 %</dd><dt>Apalanc.</dt><dd>≤ 10x</dd><dt>Calidad</dt><dd>A+ · 3/3</dd></dl>
+        <p>Estrategia probada en G8, tendencia o expansión, 24 h sin avisos y ninguna pérdida reciente. Permite piramidar ganadoras.</p></article>
+      <article class="mode turbo"><div class="top2"><h3>Turbo</h3><span class="where">solo bolsa · tu "sí"</span></div>
+        <dl><dt>Riesgo/op</dt><dd>¾ Kelly · ≤ 15 %</dd><dt>Apalanc.</dt><dd>≤ 20x</dd><dt>Sesión</dt><dd>máx. 4 h</dd></dl>
+        <p>Igual que Ataque, más tu permiso con <span class="mono">/turbo</span> para esa sesión. Cualquier pérdida lo apaga.</p></article>
+    </div>
+  </section>
+
+  <!-- FUNNEL -->
+  <section aria-labelledby="t-fun">
+    <div class="head">
+      <span class="eyebrow">Metodología</span>
+      <h2 id="t-fun">El embudo: ninguna estrategia toca dinero sin pasar las nueve puertas</h2>
+    </div>
+    <div class="funnel" id="funnel"></div>
+  </section>
+
+  <!-- STRATEGIES -->
+  <section aria-labelledby="t-str">
+    <div class="head">
+      <span class="eyebrow">Cartera</span>
+      <h2 id="t-str">Siete estrategias, cada una en su régimen</h2>
+      <p class="muted">Todas son hipótesis hasta que el embudo diga lo contrario. Tus alertas de TradingView entran como una más.</p>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>ID</th><th>Estrategia</th><th>Marcos</th><th>Régimen</th><th>Idea</th><th>Salida</th></tr></thead>
+      <tbody id="strat"></tbody>
+    </table></div>
+  </section>
+
+  <!-- TARGET -->
+  <section aria-labelledby="t-tar">
+    <div class="head">
+      <span class="eyebrow">El objetivo, con números</span>
+      <h2 id="t-tar">+800 USDT a la semana: depende de la ventaja, no del apalancamiento</h2>
+      <p class="muted">Probabilidad de ganar +800 en una semana con 40 operaciones y 10 % de riesgo, según 100 000 simulaciones. Por eso el objetivo se persigue solo con la bolsa de ganancias.</p>
+    </div>
+    <div class="target">
+      <div class="tcard"><small>Ventaja excepcional · 55 % · 2,5R</small><b style="color:var(--gain)">96 %</b><small>2 % de riesgo de perder la mitad</small></div>
+      <div class="tcard"><small>Ventaja buena · 50 % · 2R</small><b style="color:var(--warn)">56 %</b><small>11 % de riesgo de perder la mitad</small></div>
+      <div class="tcard"><small>Ventaja realista · 45 % · 1,5R</small><b style="color:var(--loss)">8 %</b><small>44 % de riesgo de perder la mitad</small></div>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section aria-labelledby="t-road">
+    <div class="head">
+      <span class="eyebrow">Hoja de ruta</span>
+      <h2 id="t-road">Seis fases, cada una aprobada por ti</h2>
+    </div>
+    <div class="road">
+      <article class="ph done"><span class="st">Hecha</span><h3>F0 · Cimientos</h3><p>Motor de riesgo, suelo, modos, puerta PASS/BLOCK, sonda de MEXC, barreras de Claude. 153 tests.</p></article>
+      <article class="ph next"><span class="st">Siguiente · en tu Mac</span><h3>F1 · Datos y gráficos</h3><p>12 meses de datos de MEXC, indicadores verificados contra TradingView, régimen y esta Sala de Mando con datos reales.</p></article>
+      <article class="ph"><span class="st later">Después</span><h3>F2 · Laboratorio</h3><p>Backtests con costes reales, walk-forward, Monte Carlo y el motor de escenarios.</p></article>
+      <article class="ph"><span class="st later">Después</span><h3>F3 · Papel 24/7</h3><p>Alertas de TradingView, Telegram, KILL y simulacros de emergencia semanales.</p></article>
+      <article class="ph"><span class="st later">Después</span><h3>F4 · Copiloto</h3><p>Primeras órdenes reales con tamaño mínimo y tu "sí" por ticket. Servidor con IP fija.</p></article>
+      <article class="ph"><span class="st later">Después</span><h3>F5 · Automático</h3><p>Solo estrategias probadas. Ataque y Turbo con la bolsa de ganancias.</p></article>
+    </div>
+  </section>
+
+  <!-- CHECKLIST -->
+  <section aria-labelledby="t-mac">
+    <div class="head">
+      <span class="eyebrow">En tu Mac</span>
+      <h2 id="t-mac">Lista para arrancar</h2>
+      <p class="muted">Marca lo que vayas completando; se recuerda en este navegador. <span class="progress" id="prog"></span></p>
+    </div>
+    <div class="check" id="checklist"></div>
+  </section>
+
+  <footer>
+    <span>Diseño: docs/superpowers/specs/2026-10-23-sistema-trading-mexc-design.md · Plan: docs/superpowers/plans/</span>
+    <span>Herramienta propia, no consejo financiero. El trading con apalancamiento puede hacer perder el capital asignado; el suelo y la puerta de riesgo existen para limitarlo.</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fmt = (x, d = 2) => Number(x).toLocaleString('es-ES', {minimumFractionDigits: d, maximumFractionDigits: d});
+
+  // ---------- random ----------
+  function rng(seed){ let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+  function gauss(r){ let u = 0, v = 0; while(!u) u = r(); while(!v) v = r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+  // ---------- path simulation (shared) ----------
+  // Precio en unidades de R: entrada 0, stop -1, TP1 +1.5. Paso con deriva leve, volatilidad y saltos raros.
+  function simulate(n, steps, seed){
+    const r = rng(seed), paths = [];
+    for(let i=0;i<n;i++){
+      const p = [0]; let x = 0, jump = false;
+      const drift = 0.012 + (r()-0.5)*0.02, vol = 0.17 + r()*0.08;
+      for(let t=1;t<=steps;t++){
+        let dx = drift + vol*gauss(r);
+        if(r() < 0.004){ dx += (r()<0.5?-1:1)*(1.6 + r()*1.4); jump = true; }
+        x += dx; p.push(x);
+      }
+      paths.push({p, jump});
+    }
+    return paths;
+  }
+  const STOP = -1, TP1 = 1.5;
+  function classify(path){
+    const p = path.p; let hitTP = -1, hitStop = -1, minX = 0, maxX = 0;
+    for(let t=1;t<p.length;t++){
+      minX = Math.min(minX, p[t]); maxX = Math.max(maxX, p[t]);
+      if(hitStop<0 && hitTP<0 && p[t] <= STOP) hitStop = t;
+      if(hitStop<0 && hitTP<0 && p[t] >= TP1) hitTP = t;
+    }
+    if(path.jump && hitStop>0) return 'extremo';
+    if(hitStop > 0) return 'reversion';
+    if(hitTP > 0) return maxX >= 3 ? 'fuerte' : 'lenta';
+    if(minX <= -0.5) return 'retroceso';
+    return 'rango';
+  }
+  // R realizado con la política: stop -1; TP1 50 % a 1.5R y runner con trailing de 1R; si no, cierre al final.
+  function realized(path){
+    const p = path.p; let peak = 0, half = false, r = 0;
+    for(let t=1;t<p.length;t++){
+      if(!half && p[t] <= STOP) return -1;
+      if(!half && p[t] >= TP1){ half = true; r += 0.5*TP1; }
+      peak = Math.max(peak, p[t]);
+      if(half && p[t] <= Math.max(0, peak-1)) return r + 0.5*Math.max(0, peak-1);
+    }
+    const last = p[p.length-1];
+    return half ? r + 0.5*Math.max(0,last) : Math.max(-1,last);
+  }
+  const SC = {
+    fuerte:   {name:'Continuación fuerte', color:'--gain', play:'Trailing por estructura y piramidar con la bolsa (stop en BE).'},
+    lenta:    {name:'Continuación lenta',  color:'--info', play:'Parcial en TP1, stop a BE + costes, runner con trailing amplio.'},
+    retroceso:{name:'Retroceso sano',      color:'--warn', play:'Mantener. No mover el stop, no añadir.'},
+    rango:    {name:'Rango',               color:'--faint',play:'Stop por tiempo: salir cerca de 0R.'},
+    reversion:{name:'Reversión',           color:'--loss', play:'Salida anticipada antes del stop si se confirma.'},
+    extremo:  {name:'Evento extremo',      color:'--gold', play:'El stop en el exchange protege; reducir antes de eventos.'}
+  };
+
+  function drawPaths(canvas, paths, opts){
+    const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+    const pad = {l:52, r:16, t:16, b:26}, steps = opts.steps || paths[0].p.length-1;
+    const yMin = -2.4, yMax = 4.4;
+    const X = t => pad.l + (W-pad.l-pad.r)*t/steps;
+    const Y = v => pad.t + (H-pad.t-pad.b)*(yMax-Math.max(yMin,Math.min(yMax,v)))/(yMax-yMin);
+    ctx.clearRect(0,0,W,H);
+    ctx.font = '600 13px "JetBrains Mono", monospace';
+    // grid
+    ctx.strokeStyle = css('--line'); ctx.lineWidth = 1; ctx.fillStyle = css('--faint');
+    for(let v=-2; v<=4; v++){ ctx.beginPath(); ctx.moveTo(pad.l, Y(v)); ctx.lineTo(W-pad.r, Y(v)); ctx.stroke(); ctx.fillText((v>0?'+':'')+v+'R', 8, Y(v)+4); }
+    // paths
+    const shown = paths.slice(0, opts.max || paths.length);
+    for(const path of shown){
+      const cls = opts.classes ? opts.classes.get(path) : null;
+      ctx.strokeStyle = cls ? css(SC[cls].color) : css('--muted');
+      ctx.globalAlpha = opts.alpha || 0.16; ctx.lineWidth = 1.2;
+      ctx.beginPath(); path.p.forEach((v,t)=> t? ctx.lineTo(X(t),Y(v)) : ctx.moveTo(X(t),Y(v))); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // percentiles
+    if(opts.bands){
+      const qs = [0.05,0.5,0.95];
+      qs.forEach((q,i) => {
+        ctx.strokeStyle = i===1 ? css('--fg') : css('--gold'); ctx.lineWidth = i===1 ? 2.2 : 1.6; ctx.setLineDash(i===1?[]:[5,5]);
+        ctx.beginPath();
+        for(let t=0;t<=steps;t++){ const col = paths.map(p=>p.p[t]).sort((a,b)=>a-b); const v = col[Math.floor(q*(col.length-1))]; t? ctx.lineTo(X(t),Y(v)) : ctx.moveTo(X(t),Y(v)); }
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+    }
+    // stop / tp / entry
+    const line = (v, color, label) => { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash([7,5]); ctx.beginPath(); ctx.moveTo(pad.l,Y(v)); ctx.lineTo(W-pad.r,Y(v)); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle = color; ctx.fillText(label, W-pad.r-ctx.measureText(label).width-4, Y(v)-6); };
+    line(STOP, css('--loss'), 'STOP −1R · en el exchange');
+    line(TP1, css('--gain'), 'TP1 +1,5R');
+    line(0, css('--fg'), 'ENTRADA');
+    ctx.fillStyle = css('--faint'); ctx.fillText('velas de 15m →', pad.l, H-6);
+  }
+
+  // ---------- hero animation ----------
+  const hero = document.getElementById('heroCanvas');
+  let heroPaths = simulate(260, 80, 7), heroT = reduce ? 80 : 0;
+  function heroFrame(){
+    const view = heroPaths.map(p => ({p: p.p.slice(0, Math.max(2, Math.floor(heroT)+1)), jump: p.jump}));
+    drawPaths(hero, heroT >= 80 ? heroPaths : view, {alpha:0.14, bands: heroT >= 80, max: 260, steps: 80});
+    if(heroT < 80){ heroT += 0.9; requestAnimationFrame(heroFrame); }
+    else if(!reduce){ setTimeout(() => { heroPaths = simulate(260, 80, Math.floor(Math.random()*1e6)); heroT = 0; requestAnimationFrame(heroFrame); }, 3500); }
+  }
+  heroFrame();
+
+  // ---------- war room ----------
+  const war = document.getElementById('warCanvas');
+  function runWar(seed){
+    const paths = simulate(900, 96, seed);
+    const classes = new Map(); const count = {}; Object.keys(SC).forEach(k=>count[k]=0);
+    let sum = 0;
+    for(const p of paths){ const c = classify(p); classes.set(p,c); count[c]++; sum += realized(p); }
+    drawPaths(war, paths, {alpha:0.22, classes, max: 420});
+    document.getElementById('expR').textContent = (sum/paths.length >= 0 ? '+' : '') + fmt(sum/paths.length) + ' R';
+    document.getElementById('expR').style.color = sum >= 0 ? css('--gain') : css('--loss');
+    document.getElementById('warMeta').textContent = `${paths.length} caminos · semilla ${seed}`;
+    const bars = document.getElementById('bars'); bars.innerHTML = '';
+    for(const k of Object.keys(SC)){
+      const pct = 100*count[k]/paths.length;
+      const el = document.createElement('div'); el.className = 'bar';
+      el.innerHTML = `<div class="lbl"><span>${SC[k].name}</span><b>${fmt(pct,0)} %</b></div><div class="track"><i style="width:0;background:var(${SC[k].color})"></i></div><small>${SC[k].play}</small>`;
+      bars.appendChild(el);
+      requestAnimationFrame(()=> el.querySelector('i').style.width = pct + '%');
+    }
+  }
+  let warSeed = 19;
+  runWar(warSeed);
+  document.getElementById('newOrder').addEventListener('click', () => runWar(warSeed = Math.floor(Math.random()*1e6)));
+
+  // ---------- departments ----------
+  const DEPTS = [
+    ['1','Datos','Velas de 1m a 1D, trades, libro L2, funding, open interest y mark price de MEXC. Detecta y rellena huecos. Graba el order flow desde el primer día.'],
+    ['2','Análisis técnico','Indicadores verificados contra TradingView, estructura de mercado, Heikin Ashi y Renko, perfil de volumen, delta y CVD, y el clasificador de régimen.'],
+    ['3','Contexto','Funding extremo, picos de open interest, Fear & Greed, dominancia de BTC y calendario macro. Marca las ventanas peligrosas.'],
+    ['4','Estrategia','Siete estrategias con reglas explícitas y tus alertas de TradingView. Cada setup trae entrada, stop, objetivos, invalidación y calidad.'],
+    ['5','Simulación','Backtest con comisiones, slippage y funding reales, walk-forward, Monte Carlo y escenarios de estrés.'],
+    ['5b','Escenarios en posición','Al entrar la orden: miles de caminos, seis escenarios y una jugada preparada para cada uno. Elige la mejor forma de salir.'],
+    ['6','Riesgo · veto','Calcula el tamaño, vigila el suelo y los límites, decide el modo y dice PASS o BLOCK. Nadie puede saltárselo.', true],
+    ['7','Ejecución','Entra como maker, pone el stop en el exchange al instante, reintenta sin duplicar y reconcilia tras cualquier caída.'],
+    ['8','Monitoreo','Latido cada 30 s, alertas y comandos por Telegram, y el botón KILL que cierra todo.'],
+    ['9','Gráficos','Indicadores Pine propios en TradingView y esta Sala de Mando con datos reales.'],
+    ['10','Auditoría','Diario inmutable de cada decisión e informe semanal: vivo frente a simulado, qué funcionó y qué no.']
+  ];
+  const dWrap = document.getElementById('depts'), dDet = document.getElementById('deptDetail');
+  function showDept(i){
+    [...dWrap.children].forEach((b,j)=>b.setAttribute('aria-pressed', String(i===j)));
+    const d = DEPTS[i]; dDet.innerHTML = `<span class="eyebrow">Departamento ${d[0]}</span><h3>${d[1]}</h3><p class="muted">${d[2]}</p>`;
+  }
+  DEPTS.forEach((d,i)=>{ const b = document.createElement('button'); b.type='button'; b.className='dept'+(d[3]?' veto':''); b.innerHTML=`<span class="n">DEPT ${d[0]}</span><span class="t">${d[1]}</span>`; b.addEventListener('click',()=>showDept(i)); dWrap.appendChild(b); });
+  showDept(6);
+
+  // ---------- funnel ----------
+  const G = [
+    ['G0','Hipótesis','explicable en 3 frases, ≤ 5 parámetros'],
+    ['G1','Backtest','≥ 200 operaciones · ventaja mínima ≥ +0,15R tras costes · PF > 1,5'],
+    ['G2','Walk-forward','fuera de muestra conserva ≥ 50 %'],
+    ['G3','Robustez','parámetros ±20 %, ≥ 3 pares, regímenes separados'],
+    ['G4','Estadística','Deflated Sharpe > 0,95 · sobreajuste < 20 %'],
+    ['G5','Monte Carlo + estrés','P(tocar el suelo en 12 semanas) < 2 %'],
+    ['G6','Papel 2–4 semanas','≥ 30 operaciones dentro de lo simulado'],
+    ['G7','Vivo mínimo','tamaño mínimo, modo Normal, ≥ 30 operaciones', true],
+    ['G8','Escalar','habilita Ataque y Turbo con la bolsa', true]
+  ];
+  document.getElementById('funnel').innerHTML = G.map((g,i)=>`<div class="gstep${g[3]?' money':''}"><span class="g">${g[0]}</span><div class="b" style="margin-left:${i*1.2}%;margin-right:${i*1.2}%"><strong>${g[1]}</strong><span>${g[2]}</span></div></div>`).join('');
+
+  // ---------- strategies ----------
+  const S = [
+    ['S1','Retroceso en tendencia','4h · 1h · 15m',['Tendencia'],'Entrar a favor de la tendencia mayor en el retroceso a EMA21 con vela de rechazo.','TP1 1,5R + runner'],
+    ['S2','Ruptura de sesión','1h · 15m · 5m',['Compresión','Expansión'],'Rango de Asia roto en la apertura de Europa o EE. UU. con volumen y CVD a favor.','TP1 1R + runner'],
+    ['S3','Squeeze de volatilidad','4h · 1h · 15m',['Compresión'],'Bollinger dentro de Keltner; entrar en la primera vela de expansión.','Trailing ATR'],
+    ['S4','Squeeze por funding','1h · 15m · 5m',['Todos salvo caos'],'Funding extremo + OI subiendo + rotura contra la masa posicionada.','TP1 1R · TP2 2,5R'],
+    ['S5','Barrido de liquidez','1h · 15m · 5m',['Rango','Tendencia'],'Barrido de un máximo o mínimo de sesión seguido de cambio de estructura.','Lado opuesto + runner'],
+    ['S6','Reversión a VWAP','15m · 5m · 1m',['Rango'],'Desviación ≥ 2σ del VWAP con agotamiento; solo órdenes maker.','VWAP'],
+    ['S7','Order flow','15m · 5m · 1m',['Todos'],'Nuevo extremo sin confirmación de CVD; absorción en el libro. Tras 3 meses de datos.','Por definir'],
+    ['TV','Tus señales TradingView','según script',['Según ficha'],'Llegan por webhook y pasan simulación y riesgo como cualquier otra.','Motor de escenarios']
+  ];
+  document.getElementById('strat').innerHTML = S.map(s=>`<tr><td><span class="id">${s[0]}</span></td><td><strong>${s[1]}</strong></td><td class="mono">${s[2]}</td><td>${s[3].map(t=>`<span class="tag">${t}</span>`).join('')}</td><td>${s[4]}</td><td>${s[5]}</td></tr>`).join('');
+
+  // ---------- gate simulator ----------
+  const $ = id => document.getElementById(id);
+  const MODES = {NORMAL:{ceil:0.01, lev:3, q:1}, ESCUDO:{ceil:0.0025, lev:2, q:2}};
+  const QR = {'B':0,'A':1,'A+':2};
+  function gate(){
+    const eq = +$('g-eq').value, dayLoss = Math.max(0, +$('g-day').value), open = Math.max(0, +$('g-open').value);
+    const mode = $('g-mode').value, entry = +$('g-entry').value, stop = +$('g-stop').value, price = +$('g-price').value;
+    const q = $('g-q').value, regOk = $('g-reg').value === 'ok', expR = +$('g-exp').value;
+    const M = MODES[mode], step = 0.01, mmr = 0.005, fee = 0.0002, slip = 0.01;
+    const checks = []; let fail = null;
+    const add = (name, ok, detail) => { const st = fail ? 'skip' : (ok ? 'ok' : 'ko'); if(!ok && !fail) fail = name; checks.push({name, st, detail}); };
+    const dayStart = eq + dayLoss;
+    const halted = eq <= 450;
+    add('Sistema activo (suelo 450)', !halted, halted ? 'HALT' : 'OK');
+    add('Estrategia apta para vivo (G7+)', true, 'G7');
+    add(`Calidad mínima en ${mode === 'NORMAL' ? 'Normal' : 'Escudo'}`, q !== 'B' && QR[q] >= M.q, q);
+    add('Régimen permitido', regOk, regOk ? 'tendencia' : 'rango');
+    const dailyLeft = 0.02*dayStart - dayLoss, floorLeft = eq - 450;
+    const budget = Math.min(dailyLeft, floorLeft) - open;
+    const paused = dayLoss >= 0.02*dayStart - 1e-9;
+    add('Disyuntores y margen de riesgo', !paused && budget > 1e-9, paused ? 'pausa diaria' : `quedan ${fmt(Math.max(0,budget))}`);
+    let risk = Math.min(eq*Math.min(0.125, M.ceil), Math.max(0,budget));
+    add('Exposición (≤ 3 posiciones)', true, 'OK');
+    let qty = 0, lev = 0, notional = 0, liq = null;
+    const valid = isFinite(entry) && isFinite(stop) && entry > 0 && stop > 0 && stop < entry;
+    if(!valid){ add('Tamaño mínimo', false, 'stop inválido'); }
+    else {
+      const per = (entry - stop) + stop*fee + slip;
+      let n = Math.floor(risk/per/step + 1e-9); if(n*step*per > risk) n--;
+      qty = Math.max(0, +(n*step).toFixed(8)); notional = qty*entry;
+      const okSize = qty >= step && notional >= 1;
+      lev = Math.max(1, Math.ceil(notional/(eq/3) - 1e-9));
+      add('Tamaño mínimo y apalancamiento', okSize && lev <= M.lev, okSize ? (lev <= M.lev ? `${fmt(qty)} · ${lev}x` : `necesita ${lev}x`) : 'cantidad 0');
+      liq = entry*(1 - 1/lev + mmr);
+      add('Liquidación lejos del stop', (entry-stop) <= 0.5*(entry-liq), `liq ${fmt(liq)}`);
+    }
+    add('R esperado > 0', expR > 0, fmt(expR) + ' R');
+    const stale = valid && Math.abs(price-entry) > 0.3*(entry-stop) + 1e-9;
+    add('Precio cerca de la entrada', !stale, stale ? 'caducado' : 'OK');
+    add('Ticket firmado · 60 s', !fail, fail ? '—' : 'emitido');
+    // render
+    const pill = $('pill'); pill.textContent = fail ? 'BLOCK' : 'PASS'; pill.className = 'pill ' + (fail ? 'block' : 'pass');
+    $('checks').innerHTML = checks.map(c => `<li class="${c.st}"><span>${c.name}</span><span class="s">${c.st==='ok'?'✓ ':c.st==='ko'?'✗ ':''}${c.st==='skip'?'—':c.detail}</span></li>`).join('');
+    const loss = fail ? 0 : qty*((entry-stop) + stop*fee + slip);
+    $('ticket').innerHTML = [
+      ['Riesgo permitido', fail ? '—' : fmt(risk) + ' USDT'],
+      ['Cantidad', fail ? '—' : fmt(qty)],
+      ['Apalancamiento', fail ? '—' : lev + 'x'],
+      ['Pérdida si salta el stop', fail ? '—' : fmt(loss) + ' USDT']
+    ].map(k=>`<div><span>${k[0]}</span><b>${k[1]}</b></div>`).join('');
+  }
+  $('gateForm').addEventListener('input', gate);
+  $('gateForm').addEventListener('submit', e => e.preventDefault());
+  gate();
+
+  // ---------- checklist ----------
+  const STEPS = [
+    'Crear el repo privado vacío en GitHub y darle acceso a la app de Claude',
+    'Instalar Homebrew, Git y uv: <code>brew install uv</code>',
+    'Clonar el repo y ejecutar <code>uv sync</code> y <code>uv run pytest</code>',
+    'Crear en MEXC una subcuenta solo para el bot, con 2FA',
+    'Crear la clave API de la subcuenta: lectura + trading, <strong>sin retiros</strong>',
+    'Guardar las claves: <code>uv run tradesys secrets set mexc_api_key</code> y <code>mexc_api_secret</code>',
+    'Comprobar el entorno: <code>uv run tradesys doctor</code>',
+    'Ver qué permite tu cuenta: <code>uv run tradesys mexc probe --private</code>',
+    'Crear el bot de Telegram con BotFather y apuntar tu chat ID',
+    'Confirmar el plan de TradingView con webhooks y activar 2FA'
+  ];
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem('sala-checklist') || '[]'); } catch(e) {}
+  const cl = $('checklist');
+  STEPS.forEach((s,i) => {
+    const id = 'chk-' + i;
+    const lab = document.createElement('label'); lab.setAttribute('for', id);
+    lab.innerHTML = `<input type="checkbox" id="${id}" ${saved.includes(i)?'checked':''}><span>${s}</span>`;
+    cl.appendChild(lab);
+  });
+  function prog(){
+    const done = [...cl.querySelectorAll('input')].map((x,i)=>x.checked?i:-1).filter(i=>i>=0);
+    $('prog').textContent = `${done.length}/${STEPS.length} completados`;
+    try { localStorage.setItem('sala-checklist', JSON.stringify(done)); } catch(e) {}
+  }
+  cl.addEventListener('change', prog); prog();
+
+  // redraw canvases on theme change
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { runWar(warSeed); });
+})();
+</script>

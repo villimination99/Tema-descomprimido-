@@ -665,6 +665,16 @@ Cada fase termina con: tests en verde, demostración en vivo al dueño y su apro
 
 ---
 
+## 18a. Mejoras del plan (v3, 2026-10-23)
+Incorporadas tras construir y revisar la Fase 0:
+
+1. **Presupuesto de riesgo vivo** (ya implementado): ninguna operación nueva puede arriesgar más que lo que queda antes del suelo o de los límites diario y semanal, descontando el riesgo ya abierto. Es la garantía central de §1b.
+2. **Sombra permanente:** toda estrategia en vivo corre a la vez en papel con las mismas señales. Si vivo y sombra divergen más de 0,3R de media en 20 operaciones, se audita la ejecución (slippage, rechazos, latencia) antes de culpar a la estrategia.
+3. **Simulacros de emergencia:** cada lunes, en papel, el sistema ejecuta un KILL, una caída de WebSocket y un reinicio con posición abierta, y registra cuánto tardó en quedar protegido. Si algo falla, el lunes no se opera en vivo.
+4. **Sala de Mando visual:** panel único para el dueño con capital protegido frente al suelo, bolsa de ganancias, modo de cada bucket, puerta de riesgo y escenarios de cada posición abierta. El prototipo navegable ya existe como artefacto y en la F1 se convierte en el panel real con datos de MEXC.
+5. **Revisión de escenarios:** el diario compara el escenario previsto con el ocurrido (matriz de confusión semanal). Los generadores que fallan pierden peso automáticamente.
+6. **Calendario de riesgo:** las ventanas macro, las horas de funding y los desbloqueos de tokens se cargan una vez al día y se muestran en el panel 24 h antes, para que Escudo no llegue por sorpresa.
+
 ## 18b. Decisiones cerradas (2026-10-23)
 El dueño delegó en Claude el diseño del sistema y de las estrategias ("como veas mejor"). Quedan fijadas:
 
