@@ -181,7 +181,19 @@ Cada estrategia tiene una **ficha** (`config/strategies/<nombre>.yaml` + informe
 
 ## 6b. Objetivo de rendimiento: cuentas hechas
 
-**Objetivo del dueño:** con ~500 $ ganar +500 $ por semana (x2 semanal), aceptando más riesgo cuando el mercado lo permita y bajándolo cuando no.
+**Objetivo del dueño:** empezar con 500 $ y ganar **+800 a +1000 $ o más por semana** (x2,6–x3 semanal, ≈ +115–145 $/día), aceptando más riesgo cuando el mercado lo permita y bajándolo cuando no.
+
+Probabilidad de lograr +800 $ en una semana (simulación, script `docs/analisis/mc_objetivo_800.py`):
+
+| Ventaja de la estrategia | 20 ops/sem, 10 % riesgo | 40 ops/sem, 10 % riesgo | Riesgo de perder >50 % esa semana (40 ops, 10 %) |
+|---|---|---|---|
+| Excepcional (55 %, 2,5R) — rara, pocas veces sostenible | 75 % | 96 % | 2 % |
+| Buena (50 %, 2R) | 25 % | 56 % | 11 % |
+| Realista (45 %, 1,5R) | 2 % | 8 % | 44 % |
+
+Lectura: el objetivo **solo es alcanzable con una ventaja excepcional + muchas operaciones por semana** (scalping/intradía activo). Por tanto la misión n.º 1 del sistema es **encontrar y demostrar esa ventaja** (G1–G6) antes de apostar; el modo Ataque se habilita solo cuando la ventaja medida lo justifica. Con 500 $ además pesan los mínimos de orden y las comisiones: el Dept. 5 debe simular con las comisiones maker/taker reales de MEXC.
+
+Simulación previa con objetivo x2 semanal (100 000 caminos, 20 operaciones/semana, coste 0,1R por operación, script en `docs/analisis/mc_objetivo.py`):
 
 Simulación Monte Carlo (100 000 caminos, 20 operaciones/semana, coste 0,1R por operación, script en `docs/analisis/mc_objetivo.py`):
 
@@ -309,7 +321,7 @@ Cada fase termina con: tests en verde, demostración en vivo, y tu aprobación p
 ## 10. Preguntas abiertas para el dueño (necesarias antes de la Fase 0)
 1. **Autonomía final:** ¿hasta qué nivel quieres llegar (L2 copiloto o L3 automático)?
 2. **Mercado:** ¿spot, futuros perpetuos o ambos? ¿Apalancamiento máximo que aceptas?
-3. **Capital:** ¿confirmas 500 $ iniciales? ¿Qué reparto base/ataque (propuesta 70/30)? ¿Cuánto aceptas perder entero antes de parar todo?
+3. **Capital:** 500 $ iniciales, objetivo +800–1000 $/semana (confirmado). ¿Qué reparto base/ataque (propuesta 70/30)? ¿Cuánto aceptas perder entero antes de parar todo?
 4. **Pares:** ¿BTC/ETH solamente, top 20, o también altcoins pequeñas?
 5. **Estilo y temporalidad:** ¿scalping (minutos), intradía (horas) o swing (días)?
 6. **TradingView:** ¿qué plan tienes? ¿Tienes ya indicadores o estrategias Pine propias que quieras integrar?
