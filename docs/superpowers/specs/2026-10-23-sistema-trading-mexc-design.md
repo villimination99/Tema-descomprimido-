@@ -63,6 +63,36 @@ Lo que descartamos: el mercado (acciones), los datos (Yahoo/SEC), los brókers (
 
 ---
 
+## 1b. Principio rector: NO PERDER el capital
+
+**Decisión del dueño:** el plan es **no perder**; el control de riesgo es la prioridad absoluta. Orden de prioridades del sistema, que resuelve cualquier conflicto entre reglas:
+
+1. **Preservar el capital** (los 500 USDT iniciales).
+2. **Consistencia:** semanas positivas pequeñas antes que semanas enormes.
+3. **Objetivo de rendimiento** (+800–1000/semana): se persigue **solo con ganancias ya obtenidas**, nunca con el capital inicial.
+
+Honestidad: ningún sistema puede garantizar que *nunca* se pierda una operación ni una semana. Lo que este diseño garantiza es que **la pérdida máxima del capital inicial está limitada y es conocida de antemano** (el suelo, §9.4), y que no se arriesga dinero real hasta que una estrategia haya demostrado ventaja en simulación y en papel, donde perder cuesta 0.
+
+### Cómo se traduce
+- **Capital protegido (500 USDT):** solo modos Escudo y Normal, con riesgo bajo por operación y **suelo duro** de −10 % (450 USDT): si se toca, el sistema se detiene por completo (HALT) hasta una revisión con el dueño.
+- **Bolsa de ganancias ("dinero de la casa"):** al cierre de cada semana positiva, el 50 % de la ganancia realizada sobre el capital protegido pasa a la bolsa. **Solo la bolsa** puede usar Ataque o Turbo. Si la bolsa se pierde entera, el capital inicial sigue intacto.
+- **El otro 50 % de la ganancia** se queda en el capital protegido (que crece) o se retira, a elección del dueño.
+- **Primera semana en vivo = 0 en la bolsa:** el modo agresivo solo existe cuando ya se ha ganado algo.
+
+### Qué significa el suelo con distintas calidades de estrategia
+12 semanas, 30 operaciones/semana, capital protegido al 1 % por operación, suelo en 450. Script: `docs/analisis/mc_capital_protegido.py`.
+
+| Ventaja de la estrategia | P(tocar el suelo −10 %) | P(acabar por debajo de 500) |
+|---|---|---|
+| Excepcional (55 %, 2,5R) | 0,2 % | 0,2 % |
+| Buena (50 %, 2R) | 2,4 % | 1,9 % |
+| Realista justa (45 %, 1,5R, casi sin ventaja tras costes) | 80 % | 66 % |
+| Sin ventaja (40 %, 1,5R) | 99 % | 98 % |
+
+**Lectura:** el suelo convierte "perderlo todo" en "perder como mucho 50 USDT". Pero la única forma de **no perder** de verdad es no llevar a dinero real una estrategia sin ventaja clara. Por eso el embudo (§8) es la pieza principal del control de riesgo, y sus umbrales se endurecen (ver §8).
+
+---
+
 ## 2. Objetivo de rendimiento y lo que implica
 
 **Objetivo del dueño:** empezar con **500 USDT** y ganar **+800 a +1000 USDT o más por semana**, es decir, multiplicar el capital por 2,6–3 cada semana (≈ +115–145 USDT/día). Se acepta más riesgo cuando el mercado lo permita, y el sistema debe saber reducirlo cuando no.
@@ -78,7 +108,7 @@ Monte Carlo de 100 000 caminos, riesgo fijo del 10 % por operación y coste de 0
 
 Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 semanas con menos del 10 % del capital.
 
-**Con los topes reales de este diseño** (base 350 al 2 %, ataque 150 al 10 %, operaciones repartidas a medias; script `docs/analisis/mc_objetivo_topes.py`):
+**Con los topes de la versión anterior (70/30)** (base 350 al 2 %, ataque 150 al 10 %, operaciones repartidas a medias; script `docs/analisis/mc_objetivo_topes.py`):
 
 | Ventaja | P(+800 en 1 semana), 20 ops | P(+800), 40 ops | Ganancia semanal mediana (40 ops) |
 |---|---|---|---|
@@ -86,7 +116,7 @@ Con ventaja realista y 20 % de riesgo, el 46 % de los caminos termina en 4 seman
 | Buena | 0 % | 2,9 % | +177 |
 | Realista | 0 % | 0 % | −9 |
 
-**Tensión que decide el dueño (§19, pregunta 1):** los topes de seguridad hacen casi imposible perder más de 150 USDT en una semana, pero también hacen que +800/semana sea la excepción y no la norma. Para acercarse al objetivo hay que asignar más capital al bucket de ataque, lo que aumenta en la misma medida lo que se puede perder.
+**Resolución (decisión del dueño: no perder, §1b):** el capital inicial ya no se arriesga en modo agresivo. El objetivo de +800/semana se persigue solo con la bolsa de ganancias, así que llegar a él es **progresivo**: primero hay que acumular ganancias con riesgo bajo, y solo después el modo Ataque puede multiplicarlas.
 
 ### 2.2 Consecuencias de diseño
 1. **El motor del objetivo es la ventaja (edge), no el apalancamiento.** Por eso la misión n.º 1 del sistema es *encontrar y demostrar* ventaja (§8) antes de apostar fuerte.
@@ -276,11 +306,11 @@ Ninguna estrategia toca dinero sin pasar **todas** las puertas en orden. *(Umbra
 | Puerta | Prueba | Criterio para pasar |
 |---|---|---|
 | **G0 Hipótesis** | Regla escrita: qué ineficiencia explota y por qué existe. | Explicable en 3 frases; ≤ 5 parámetros libres. |
-| **G1 Backtest** | ≥ 12 meses (ideal 24), costes reales, solo velas cerradas. | ≥ 200 operaciones; IC95 inferior de la expectativa > 0 R después de costes; profit factor > 1,3; drawdown máx. < 25 %. |
+| **G1 Backtest** | ≥ 12 meses (ideal 24), costes reales, solo velas cerradas. | ≥ 200 operaciones; **IC95 inferior de la expectativa ≥ +0,15 R** después de costes (no basta con > 0: una ventaja "justa" toca el suelo, §1b); profit factor > 1,5; drawdown máx. < 15 % con el riesgo del modo Normal. |
 | **G2 Walk-forward** | ≥ 6 ventanas. | WFE ≥ 0,5; ≥ 2/3 de las ventanas rentables. |
 | **G3 Robustez** | Parámetros ±20 %, ≥ 3 pares, regímenes separados. | Sin "picos aislados"; rentable en ≥ 2/3 de las variantes. |
 | **G4 Estadística** | Deflated Sharpe, PBO. | DSR > 0,95; PBO < 0,2. |
-| **G5 Monte Carlo + estrés** | 10 000 caminos + escenarios del Dept. 5. | P(ruina del capital de ataque) < 5 % con el riesgo propuesto; ningún escenario de estrés supera los disyuntores (§9.4). |
+| **G5 Monte Carlo + estrés** | 10 000 caminos + escenarios del Dept. 5. | **P(tocar el suelo de 450 en 12 semanas) < 2 %** con el riesgo del modo Normal; ningún escenario de estrés supera los disyuntores (§9.4). |
 | **G6 Papel** | 2–4 semanas en vivo con `PaperBroker`. | ≥ 30 operaciones; resultado dentro del IC90 simulado; coste real de ejecución ≤ el modelado. |
 | **G7 Vivo mínimo** | Dinero real, modo Normal, tamaño mínimo. | ≥ 30 operaciones dentro del IC90; sin incidentes de ejecución. |
 | **G8 Escalar** | Habilita Ataque/Turbo para esa estrategia. | Revisión semanal sin degradación (§6, Dept. 10). |
@@ -327,18 +357,23 @@ Regla: |entrada − stop| ≤ 0,5 × |entrada − liq|   (el stop debe saltar mu
 ### 9.4 Estructura de capital y disyuntores
 *(Porcentajes iniciales: decisión de Claude. El dueño los fija en la F0.)*
 
-| Bucket | % inicial (500 USDT) | Modos permitidos | Pérdida diaria máx. | Pérdida semanal máx. |
-|---|---|---|---|---|
-| **Base** | 70 % (350) | Escudo, Normal | 3 % del bucket → pausa hasta 00:00 UTC | 6 % → pausa + revisión humana |
-| **Ataque** | 30 % (150) | Escudo, Normal, Ataque, Turbo | 30 % del bucket → pausa hasta 00:00 UTC | 100 % del bucket → pausa + revisión; **no se rellena automáticamente desde la base** |
+*(Sustituye al reparto 70/30 anterior: ver el principio §1b.)*
+
+| Bucket | Capital inicial | Modos permitidos | Pérdida diaria máx. | Pérdida semanal máx. | Suelo absoluto |
+|---|---|---|---|---|---|
+| **Base = capital protegido** | 500 USDT (100 %) | Escudo, Normal | 2 % → pausa hasta 00:00 UTC + Escudo al día siguiente | 4 % → pausa + revisión humana | **450 USDT (−10 %) → HALT total** hasta revisión con el dueño |
+| **Ataque = bolsa de ganancias** | 0 USDT; se alimenta con el 50 % de la ganancia semanal realizada | Escudo, Normal, Ataque, Turbo | 30 % de la bolsa → pausa hasta 00:00 UTC | 100 % de la bolsa → pausa; **nunca se rellena desde la base** | — (perder la bolsa no toca el capital) |
+
+**Separación física** *(decisión de Claude)*: si MEXC lo permite, la bolsa de ganancias vive en **otra subcuenta**. Así un error de software en Ataque no puede consumir margen del capital protegido. Si no es posible, la separación es contable y la impone Riesgo.
 
 **Cómo se reparten modos y buckets:**
 - **Cada bucket tiene su propio modo y sus propios contadores** (racha, drawdown desde el pico, pérdida diaria y semanal). El "drawdown ≥ 15 %" se mide sobre el pico del propio bucket.
 - **Disparadores globales** (`macro_event_window`, salud del sistema degradada) ponen **ambos** buckets en Escudo. El régimen CAOS pone en Escudo solo las operaciones de **ese símbolo**.
 - **Asignación de un setup a un bucket** (la hace Riesgo): si el setup es A+, la estrategia está en G8 y el bucket de ataque está en Ataque o Turbo → bucket de ataque. En cualquier otro caso → bucket base con su modo. Si el bucket elegido está en pausa, el setup no se reasigna al otro: BLOCK.
 
-- **Trinquete:** cuando el bucket de ataque llega a 2× su valor inicial, el 50 % de la ganancia pasa a la base (o a retirada, a elección del dueño).
-- **Racha:** 3 pérdidas seguidas en un bucket → Escudo durante 4 h.
+- **Trinquete:** cuando la bolsa de ganancias se duplica respecto a su máximo anterior, el 50 % de lo ganado vuelve al capital protegido (o se retira, a elección del dueño).
+- **Racha:** 2 pérdidas seguidas en el capital protegido (3 en la bolsa) → Escudo durante 4 h.
+- **Bloqueo de beneficios intradía:** si el día va en +2 % del capital protegido, el riesgo de las siguientes operaciones del día se reduce a la mitad. Si después se devuelve la mitad de esa ganancia, se para el día.
 - **Exposición:** máximo 3 posiciones abiertas; exposición correlacionada (correlación de 1h a 30 días > 0,7) que cuenta como una sola posición a efectos de riesgo; nocional total ≤ 10× el capital total.
 - **Sin promediar a la baja:** nunca se añade a una posición perdedora. Piramidación solo en Ataque, con el stop ya en break-even y el riesgo total de la posición ≤ el riesgo inicial.
 
@@ -346,8 +381,8 @@ Regla: |entrada − stop| ≤ 0,5 × |entrada − liq|   (el stop debe saltar mu
 
 | Modo | Techo de riesgo/op | Apalancamiento máx. | Calidad mínima | Entrar | Salir |
 |---|---|---|---|---|---|
-| 🛡️ **Escudo** | 0,5 % | 2x | A+ | Cualquiera: disyuntor diario, 3 pérdidas seguidas, drawdown desde el pico ≥ 15 %, régimen CAOS, `macro_event_window`, salud del sistema degradada | A las 00:00 UTC o cuando haya pasado el motivo y lleven 4 h sin disparadores |
-| ⚖️ **Normal** | 2 % | 5x | A | Por defecto | — |
+| 🛡️ **Escudo** | 0,25 % | 2x | A+ | Cualquiera: disyuntor diario, 3 pérdidas seguidas, drawdown desde el pico ≥ 15 %, régimen CAOS, `macro_event_window`, salud del sistema degradada | A las 00:00 UTC o cuando haya pasado el motivo y lleven 4 h sin disparadores |
+| ⚖️ **Normal** | 1 % (capital protegido) · 2 % (bolsa) | 3x | A | Por defecto | — |
 | ⚔️ **Ataque** | ½ Kelly (máx. 10 %) | 10x | A+ con alineación 3/3 | **Todas:** estrategia en G8, régimen TENDENCIA o EXPANSIÓN, sin disparadores de Escudo en 24 h, PnL semanal del bucket ≥ −10 % (nunca para recuperar), salud OK | Cualquier condición deja de cumplirse, o una pérdida |
 | 🚀 **Turbo** | ¾ Kelly (máx. 15 %) | 20x | A+ | Las de Ataque + `/turbo <horas>` del dueño (máx. 4 h por sesión) | Fin de la sesión, pérdida ≥ 15 % del bucket en la sesión, o cualquier disparador de Escudo |
 
@@ -567,8 +602,8 @@ Cada fase termina con: tests en verde, demostración en vivo al dueño y su apro
 ---
 
 ## 19. Preguntas abiertas para el dueño (antes de la Fase 0)
-1. **Pérdida máxima asumible frente al objetivo:** de los 500 USDT, ¿cuánto aceptas perder entero antes de que todo se pare y revisemos? Con 150 USDT (30 %) el +800/semana es la excepción (§2.1). Cuanto más pongas en el bucket de ataque, más cerca del objetivo y más se puede perder.
-2. **Reparto base/ataque:** depende de la respuesta anterior (propuesta inicial 70/30).
+1. **Suelo del capital:** propuesta 450 USDT (−10 %) → HALT. ¿Lo confirmas, o lo quieres más estricto (p. ej. −5 %)? Más estricto = se para antes, y con más frecuencia en semanas malas normales.
+2. **Ganancias:** del 50 % que no va a la bolsa de ataque, ¿se queda en el capital protegido (crece el interés compuesto) o se retira?
 3. **Mercado:** ¿futuros perpetuos, spot o ambos? ¿Apalancamiento máximo absoluto que aceptas (propuesta: 20x solo en Turbo)?
 4. **Autonomía final:** ¿hasta L2 (copiloto) o L3 (automático)?
 5. **Pares:** ¿solo BTC/ETH, el top 10 o un universo más amplio?
