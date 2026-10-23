@@ -1,0 +1,23 @@
+# Configuración del motor de riesgo (spec §1b y §9). Valores en fracción: 0.01 = 1 %.
+# config/risk.yaml es la copia activa; solo el dueño la cambia (hook de Claude pide confirmación).
+protected_initial_usdt: 500
+floor_usdt: 450                 # suelo absoluto del capital protegido -> HALT total
+week_starts: monday             # 00:00 UTC
+weekly_profit_to_bolsa_pct: 0.5
+shield_duration_hours: 4
+max_positions: 3
+corr_threshold: 0.7
+ticket_ttl_seconds: 60
+stale_setup_fraction: 0.3
+liq_stop_ratio: 0.5
+drawdown_to_shield_pct: 0.15
+ataque_min_week_pnl_pct: -0.10
+buckets:
+  protected: {daily_loss_pct: 0.02, weekly_loss_pct: 0.04, loss_streak_to_shield: 2, allowed_modes: [ESCUDO, NORMAL]}
+  bolsa:     {daily_loss_pct: 0.30, weekly_loss_pct: 1.00, loss_streak_to_shield: 3, allowed_modes: [ESCUDO, NORMAL, ATAQUE, TURBO]}
+modes:
+  ESCUDO: {risk_ceiling: 0.0025, max_leverage: 2,  min_quality: "A+", kelly_fraction: 0.5}
+  NORMAL: {risk_ceiling: {protected: 0.01, bolsa: 0.02}, max_leverage: 3, min_quality: "A", kelly_fraction: 0.5}
+  ATAQUE: {risk_ceiling: 0.10, max_leverage: 10, min_quality: "A+", kelly_fraction: 0.5}
+  TURBO:  {risk_ceiling: 0.15, max_leverage: 20, min_quality: "A+", kelly_fraction: 0.75, max_session_hours: 4}
+intraday_lock: {trigger_gain_pct: 0.02, risk_multiplier: 0.5, giveback_stop_pct: 0.5}
