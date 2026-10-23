@@ -27,6 +27,7 @@ class OpenPosition:
     bucket: Bucket
     risk_usdt: float
     corr_with_new: float
+    notional: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class GateContext:
     kelly_p_low: float
     kelly_b_low: float
     intraday_multiplier: float
+    risk_budget: dict[Bucket, float]  # Ledger.risk_budget: pérdida que aún cabe hoy por bucket
 
 
 def choose_bucket(ctx: GateContext) -> Bucket:
@@ -90,6 +92,9 @@ def evaluate(ctx: GateContext, cfg: RiskConfig) -> RiskDecision:
     mode = ctx.modes[bucket].mode
     tag = {"mode": mode, "bucket": bucket}
 
+    if mode not in cfg.buckets[bucket].allowed_modes:
+        return block(f"MODE: el modo {mode} no está permitido en el bucket {bucket}", **tag)
+
     # 2. Estado de la estrategia en el embudo
     if ctx.strategy_stage.rank() < Stage.G7_IN_PROGRESS.rank():
         return block(f"STAGE: estrategia en {ctx.strategy_stage}, no apta para vivo", **tag)
@@ -117,8 +122,13 @@ def evaluate(ctx: GateContext, cfg: RiskConfig) -> RiskDecision:
     equity = ctx.equities[bucket]
     ceiling = cfg.risk_ceiling(mode, bucket)
     cap = kelly_cap(ctx.kelly_p_low, ctx.kelly_b_low, cfg.modes[mode].kelly_fraction)
-    risk_pct = min(cap, ceiling) * intraday
-    risk_usdt = equity * risk_pct
+    risk_usdt = equity * min(cap, ceiling) * intraday
+    open_risk = sum(p.risk_usdt for p in ctx.open_positions if p.bucket is bucket)
+    budget_left = ctx.risk_budget[bucket] - open_risk
+    if budget_left <= 1e-9:
+        return block("BREAKER: no queda margen de riesgo hoy (suelo o límites diarios)", **tag)
+    risk_usdt = min(risk_usdt, budget_left)
+    risk_pct = risk_usdt / equity if equity > 0 else 0.0
 
     # 6. Exposición: número de posiciones y riesgo correlacionado
     if len(ctx.open_positions) >= cfg.max_positions:
@@ -147,6 +157,10 @@ def evaluate(ctx: GateContext, cfg: RiskConfig) -> RiskDecision:
         return block(f"{e.reason}: {e}", **tag)
     if in_g7:
         size = _min_size(size, s, ctx, cfg)
+    total_capital = sum(ctx.equities.values())
+    total_notional = sum(p.notional for p in ctx.open_positions) + size.notional
+    if total_notional > cfg.max_total_notional_x * total_capital + 1e-9:
+        return block("EXPOSURE: nocional total por encima del máximo permitido", **tag)
 
     # 8. Liquidación lejos del stop
     safe = safe_leverage(s.entry, s.stop, ctx.rules.mmr, s.side, size.leverage, cfg.liq_stop_ratio)
@@ -157,7 +171,9 @@ def evaluate(ctx: GateContext, cfg: RiskConfig) -> RiskDecision:
     if ctx.exp_R <= 0:
         return block(f"NEG_EXPECTANCY: R esperado {ctx.exp_R:.3f} <= 0", **tag)
 
-    # 10. Setup caducado por el precio
+    # 10. Setup caducado (por tiempo o porque el precio se alejó)
+    if ctx.now >= s.expires_at:
+        return block("STALE: el setup ha caducado", **tag)
     if abs(ctx.current_price - s.entry) > cfg.stale_setup_fraction * abs(s.entry - s.stop) + 1e-9:
         return block("STALE: el precio se alejó de la entrada", **tag)
 

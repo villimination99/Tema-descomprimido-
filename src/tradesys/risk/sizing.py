@@ -11,6 +11,12 @@ class PairRules:
     min_notional: float
     mmr: float
 
+    def __post_init__(self) -> None:
+        if not self.qty_step > 0:
+            raise ValueError("qty_step debe ser > 0")
+        if self.min_qty < 0 or self.min_notional < 0 or not 0 <= self.mmr < 1:
+            raise ValueError("reglas del par inválidas")
+
 
 @dataclass(frozen=True)
 class SizeResult:
@@ -56,7 +62,7 @@ def size_position(
         steps -= 1
     qty = round(steps * rules.qty_step, 12)
     notional = qty * entry
-    if qty < rules.min_qty or notional < rules.min_notional:
+    if qty <= 0 or qty < rules.min_qty or notional < rules.min_notional:
         raise SizingBlocked("MIN_SIZE", f"cantidad {qty} por debajo del mínimo del par")
 
     max_margin = bucket_equity / max_positions

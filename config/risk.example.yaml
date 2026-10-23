@@ -12,6 +12,7 @@ stale_setup_fraction: 0.3
 liq_stop_ratio: 0.5
 drawdown_to_shield_pct: 0.15
 ataque_min_week_pnl_pct: -0.10
+max_total_notional_x: 10          # nocional total <= 10x el capital total (§9.4)
 buckets:
   protected: {daily_loss_pct: 0.02, weekly_loss_pct: 0.04, loss_streak_to_shield: 2, allowed_modes: [ESCUDO, NORMAL]}
   bolsa:     {daily_loss_pct: 0.30, weekly_loss_pct: 1.00, loss_streak_to_shield: 3, allowed_modes: [ESCUDO, NORMAL, ATAQUE, TURBO]}

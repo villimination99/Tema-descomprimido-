@@ -126,3 +126,77 @@ def test_persistence_roundtrip(led, cfg):
     again = Ledger.from_json(cfg, led.to_json())
     assert again.equity(P) == led.equity(P)
     assert again.status(t(19, 12)).paused[P]
+
+
+def test_risk_budget_floor_headroom(led):
+    for d in (19, 20, 21, 22):
+        led.record_trade(P, -9, t(d))
+    led.human_resume(t(22, 12))  # quita la revisión semanal; 464 de capital
+    led.record_trade(P, -9, t(26))  # semana nueva: 455
+    led.record_trade(P, -4, t(27))  # 451
+    assert led.risk_budget(P, t(27, 12)) == pytest.approx(1.0)
+
+
+def test_risk_budget_daily_remaining(led):
+    led.record_trade(P, -4, t(19, 10))
+    assert led.risk_budget(P, t(19, 11)) == pytest.approx(6.0)
+
+
+def test_risk_budget_bolsa_limited_by_equity(led):
+    led.record_trade(P, 60, t(23))
+    led.roll(t(26, 0))  # bolsa 30
+    assert led.risk_budget(B, t(26, 1)) == pytest.approx(9.0)  # 30 % diario de 30
+
+
+def test_ratchet_transfer_does_not_hide_protected_losses(led):
+    led.record_trade(P, 60, t(23))
+    led.roll(t(26, 0))  # protegido 530, bolsa 30
+    led.record_trade(P, -9, t(26, 9))
+    led.record_trade(B, 30, t(26, 10))  # trinquete: 15 al protegido
+    led.record_trade(P, -2, t(26, 11))  # pérdida de trading 11 >= 2 % de 530
+    assert led.status(t(26, 12)).paused[P]
+    assert led.drawdown_from_peak(B) == pytest.approx(0.0)
+
+
+def test_weekly_sweep_does_not_create_drawdown(led):
+    led.record_trade(P, 60, t(23))
+    led.roll(t(26, 0))
+    assert led.drawdown_from_peak(P) == pytest.approx(0.0)
+
+
+def test_bolsa_overdraft_charged_to_protected(led):
+    led.record_trade(P, 60, t(23))
+    led.roll(t(26, 0))  # protegido 530, bolsa 30
+    led.record_trade(B, -40, t(26, 10))
+    assert led.equity(B) == 0
+    assert led.equity(P) == pytest.approx(520)
+    assert any("BOLSA_OVERDRAFT" in r for r in led.status(t(26, 11)).reasons)
+
+
+def test_non_utc_times_are_converted(led):
+    from datetime import timedelta, timezone
+
+    plus2 = timezone(timedelta(hours=2))
+    led.record_trade(P, -6, t(22, 12))
+    led.record_trade(P, -6, datetime(2026, 10, 23, 1, 30, tzinfo=plus2))  # 23:30 UTC del 22
+    assert led.status(t(22, 23, 45)).paused[P]
+
+
+def test_naive_datetime_rejected(led):
+    with pytest.raises(ValueError):
+        led.record_trade(P, -1, datetime(2026, 10, 19, 10))
+
+
+def test_human_resume_keeps_daily_pause(led):
+    led.record_trade(P, -10, t(19, 10))
+    led.human_resume(t(19, 11))
+    assert led.status(t(19, 12)).paused[P]
+
+
+def test_bolsa_overdraft_requires_human_review(led):
+    led.record_trade(P, 60, t(23))
+    led.roll(t(26, 0))
+    led.record_trade(B, -40, t(26, 10))
+    assert led.status(t(26, 11)).paused[P]
+    led.human_resume(t(26, 12))
+    assert not led.status(t(26, 13)).paused[P]

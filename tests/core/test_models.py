@@ -40,3 +40,19 @@ def test_stage_order():
     assert Stage.G7_IN_PROGRESS.rank() > Stage.G6.rank()
     assert Stage.G8.rank() > Stage.G7.rank()
     assert Stage.G0.rank() == 0
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"entry": float("nan")},
+        {"stop": float("nan")},
+        {"entry": float("inf")},
+        {"stop": 0.0},
+        {"stop": -5.0},
+        {"tp": [float("nan")]},
+    ],
+)
+def test_setup_prices_must_be_finite_and_positive(make_setup, kw):
+    with pytest.raises(ValidationError):
+        make_setup(**kw)

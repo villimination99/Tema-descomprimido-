@@ -65,6 +65,7 @@ def ok_ctx() -> GateContext:
         kelly_p_low=0.5,
         kelly_b_low=2.0,
         intraday_multiplier=1.0,
+        risk_budget={P: 10.0, B: 0.0},
     )
 
 
@@ -220,6 +221,7 @@ def test_attack_bucket_uses_bolsa_equity(ok_ctx, cfg):
         strategy_stage=Stage.G8,
         equities={P: 500.0, B: 50.0},
         modes={P: mode(Mode.NORMAL), B: mode(Mode.ATAQUE)},
+        risk_budget={P: 10.0, B: 15.0},
         fee_out=0.0,
         slippage_per_unit=0.0,
     )
@@ -234,3 +236,36 @@ def test_risk_uses_kelly_and_intraday(ok_ctx, cfg):
     assert d.risk_usdt == pytest.approx(2.5)
     d = evaluate(replace(ok_ctx, kelly_p_low=0.34, kelly_b_low=2.0), cfg)
     assert d.risk_usdt == pytest.approx(500 * 0.005)
+
+
+def test_risk_capped_by_budget(ok_ctx, cfg):
+    d = evaluate(replace(ok_ctx, risk_budget={P: 1.0, B: 0.0}), cfg)
+    assert d.verdict is Verdict.PASS
+    assert d.risk_usdt == pytest.approx(1.0)
+
+
+def test_budget_minus_open_risk(ok_ctx, cfg):
+    opens = [OpenPosition("ETH_USDT", P, 9.0, 0.0)]
+    d = evaluate(replace(ok_ctx, open_positions=opens, risk_budget={P: 10.0, B: 0.0}), cfg)
+    assert d.risk_usdt == pytest.approx(1.0)
+
+
+def test_no_budget_left_is_breaker(ok_ctx, cfg):
+    opens = [OpenPosition("ETH_USDT", P, 10.0, 0.0)]
+    ctx = replace(ok_ctx, open_positions=opens, risk_budget={P: 10.0, B: 0.0})
+    assert blocked(ctx, cfg).startswith("BREAKER")
+
+
+def test_total_notional_cap(ok_ctx, cfg):
+    opens = [OpenPosition("ETH_USDT", P, 1.0, 0.0, notional=4800.0)]
+    assert blocked(replace(ok_ctx, open_positions=opens), cfg).startswith("EXPOSURE")
+
+
+def test_mode_not_allowed_blocks_not_crash(ok_ctx, cfg):
+    ctx = replace(ok_ctx, modes={P: mode(Mode.ATAQUE), B: mode(Mode.NORMAL)})
+    assert blocked(ctx, cfg).startswith("MODE")
+
+
+def test_expired_setup_is_stale(ok_ctx, cfg):
+    ctx = replace(ok_ctx, now=NOW + timedelta(hours=1))
+    assert blocked(ctx, cfg).startswith("STALE")

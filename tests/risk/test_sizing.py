@@ -63,3 +63,17 @@ def test_loss_at_stop_never_exceeds_risk(equity, risk, entry, dist, fee):
         return
     assert r.loss_at_stop <= r.risk_usdt + 1e-9
     assert r.qty >= RULES.min_qty
+
+
+def test_zero_minimums_still_block_zero_qty():
+    rules = PairRules(qty_step=1.0, min_qty=0.0, min_notional=0.0, mmr=0.01)
+    with pytest.raises(SizingBlocked, match="MIN_SIZE"):
+        size_position(500, 0.0001, 100, 99, 0, 0, 0, rules, 3, 3)
+
+
+@pytest.mark.parametrize("kw", [{"qty_step": 0.0}, {"qty_step": -1.0}, {"min_qty": -1.0}])
+def test_pair_rules_validated(kw):
+    base = dict(qty_step=0.01, min_qty=0.01, min_notional=1.0, mmr=0.005)
+    base.update(kw)
+    with pytest.raises(ValueError):
+        PairRules(**base)

@@ -1,5 +1,6 @@
 """Contratos de datos compartidos por todos los departamentos (spec §7)."""
 
+import math
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Self
@@ -108,6 +109,9 @@ class Setup(_Frozen):
 
     @model_validator(mode="after")
     def _check_sides(self) -> Self:
+        prices = [self.entry, self.stop, self.invalidation, *self.tp]
+        if not all(math.isfinite(x) and x > 0 for x in prices):
+            raise ValueError("los precios deben ser números finitos y positivos")
         sign = 1 if self.side == "long" else -1
         if sign * (self.entry - self.stop) <= 0:
             raise ValueError("el stop debe estar en el lado de pérdida de la entrada")

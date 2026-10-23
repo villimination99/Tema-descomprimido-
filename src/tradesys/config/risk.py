@@ -47,6 +47,7 @@ class RiskConfig(_Cfg):
     liq_stop_ratio: float
     drawdown_to_shield_pct: float
     ataque_min_week_pnl_pct: float
+    max_total_notional_x: float = 10.0
     buckets: dict[Bucket, BucketConfig]
     modes: dict[Mode, ModeConfig]
     intraday_lock: IntradayLock
