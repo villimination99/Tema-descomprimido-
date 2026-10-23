@@ -20,3 +20,32 @@ def main(
     ),
 ) -> None:
     """Sistema de trading MEXC + TradingView."""
+
+
+secrets_app = typer.Typer(help="Gestiona secretos en el Llavero.", no_args_is_help=True)
+app.add_typer(secrets_app, name="secrets")
+
+
+@secrets_app.command("set")
+def secrets_set(name: str = typer.Argument(..., help="Nombre del secreto")) -> None:
+    """Guarda un secreto en el Llavero (la entrada no se muestra)."""
+    from tradesys.infra.secrets import ALLOWED, set_secret
+
+    if name not in ALLOWED:
+        typer.echo(f"Secreto desconocido. Permitidos: {', '.join(sorted(ALLOWED))}", err=True)
+        raise typer.Exit(2)
+    value = typer.prompt(f"Valor de {name}", hide_input=True)
+    set_secret(name, value)
+    typer.echo(f"{name} guardado en el Llavero.")
+
+
+@app.command()
+def doctor(offline: bool = typer.Option(False, "--offline", help="Sin consultas de red.")) -> None:
+    """Comprueba que el entorno está listo."""
+    from tradesys.infra.doctor import run_checks
+
+    results = run_checks(offline=offline)
+    for r in results:
+        typer.echo(f"{'OK ' if r.ok else 'MAL'}  {r.name:<9} {r.detail}")
+    if not all(r.ok for r in results):
+        raise typer.Exit(1)
