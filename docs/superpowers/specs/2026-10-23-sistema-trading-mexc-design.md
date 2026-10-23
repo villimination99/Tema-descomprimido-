@@ -179,13 +179,72 @@ Cada estrategia tiene una **ficha** (`config/strategies/<nombre>.yaml` + informe
 
 ---
 
+## 6b. Objetivo de rendimiento: cuentas hechas
+
+**Objetivo del dueño:** con ~500 $ ganar +500 $ por semana (x2 semanal), aceptando más riesgo cuando el mercado lo permita y bajándolo cuando no.
+
+Simulación Monte Carlo (100 000 caminos, 20 operaciones/semana, coste 0,1R por operación, script en `docs/analisis/mc_objetivo.py`):
+
+| Riesgo por operación | Ventaja **buena** (50 % acierto, 2R): P(x2 en 1 semana) · P(caer >50 % en 4 semanas) | Ventaja **realista** (45 %, 1,5R): P(x2 en 1 semana) · P(caer >50 % en 4 semanas) |
+|---|---|---|
+| 1 % | 0 % · 0 % | 0 % · 0 % |
+| 5 % | 13 % · 1 % | 0,6 % · 22 % |
+| 10 % | 41 % · 13 % | 6 % · 62 % |
+| 20 % | 59 % · 46 % | 13 % · 91 % (46 % acaba con <10 % del capital) |
+
+**Conclusiones que cambian el diseño:**
+1. **El motor del objetivo es la ventaja (edge), no el apalancamiento.** Con una ventaja normal, subir el riesgo no acerca el x2: acelera la ruina. Con una ventaja fuerte y verificada, el x2 semanal es *posible* algunas semanas, nunca constante.
+2. Por eso **el riesgo permitido se calcula a partir de la ventaja medida**, no del deseo: tope = ½ Kelly sobre el *límite inferior* de la ventaja estimada en las puertas G1–G6. Ejemplo: 45 %/1,5R → Kelly 8 % → tope 4 %; 50 %/2R → Kelly 25 % → tope 12 %.
+3. **El objetivo se trata como "semana objetivo", no como promesa.** El sistema mide la semana contra el objetivo y ajusta el modo; nunca sube el riesgo para "recuperar".
+
+### Modos de riesgo adaptativos
+
+| Modo | Cuándo se activa | Riesgo/op | Apalanc. máx. | Setups permitidos |
+|---|---|---|---|---|
+| 🛡️ **Escudo** | Tras pérdida diaria, régimen confuso, noticia macro, o drawdown > 15 % | 0,5 % | 2x | Solo A+ o ninguno |
+| ⚖️ **Normal** | Por defecto | 1–2 % | 5x | A y A+ |
+| ⚔️ **Ataque** | Régimen de tendencia claro + estrategia en G7 + racha dentro de lo esperado | hasta el tope ½ Kelly | 10x | A+ con confluencia multi-timeframe |
+| 🚀 **Turbo** | Solo con el **capital de ataque** (abajo), aprobado por el dueño para esa sesión | hasta 2× el tope ½ Kelly | 20x | A+ en momentos de expansión de volatilidad |
+
+Cambio de modo automático por el Departamento de Riesgo con reglas explícitas (régimen, volatilidad ATR, racha, drawdown, calendario). **Bajar de modo es inmediato; subir requiere que se cumplan todas las condiciones** y en Turbo además tu "sí".
+
+### Estructura de capital (para buscar el x2 sin arriesgar todo)
+- **Capital base** (p. ej. 70 %): solo modos Escudo/Normal. Crece despacio y protege la cuenta.
+- **Capital de ataque** (p. ej. 30 %): puede ir a Ataque/Turbo. Se asume que puede perderse entero; si se pierde, se para hasta la revisión semanal (no se rellena desde la base automáticamente).
+- **Trinquete de beneficios:** cada vez que el capital de ataque se duplica, la mitad de la ganancia pasa a la base (o se retira). Así una buena semana no se devuelve en la siguiente.
+- **Piramidación:** en Ataque, añadir a posiciones ganadoras con el stop ya en break-even, nunca promediar perdedoras.
+
+### Adaptación a distintas temporalidades
+Cada estrategia y cada modo declaran su temporalidad; el sistema elige según régimen y volatilidad:
+
+| Estilo | Marcos | Cuándo encaja | Riesgo típico |
+|---|---|---|---|
+| Scalping | 1m–5m (contexto 15m) | Alta volatilidad, sesiones solapadas UE/EE. UU., spread bajo | Comisiones pesan mucho: solo con taker/maker calculados |
+| Intradía | 15m–1h (contexto 4h) | Tendencia diaria definida | Normal/Ataque |
+| Swing | 4h–1D (contexto 1W) | Tendencias de varios días, menor ruido | Normal; tamaño menor por stops anchos |
+
+Confluencia multi-timeframe obligatoria: el marco superior define la dirección, el medio el setup, el inferior la entrada.
+
+### Otras formas de ver el gráfico (Dept. 2 y 9)
+Para el modo agresivo no basta con velas y medias. El sistema incluirá:
+- **Heikin Ashi, Renko y velas de rango**: filtran ruido para ver tendencia limpia.
+- **Perfil de volumen / Market Profile**: POC, áreas de valor, zonas de bajo volumen donde el precio se acelera.
+- **Order flow**: delta, CVD (volumen acumulado comprador vs vendedor), footprint a partir de los trades de MEXC.
+- **Libro de órdenes**: muros de liquidez, desequilibrio bid/ask.
+- **Mapas de liquidaciones y OI**: dónde se concentran stops y liquidaciones (imanes de precio).
+- **Funding y basis**: posicionamiento extremo de la masa → combustible para squeezes.
+- **Clasificador de régimen** (tendencia / rango / expansión / compresión) que decide qué vista y qué estrategia mandan.
+- **Abanico de escenarios**: el Dept. 5 dibuja sobre el gráfico los caminos simulados (percentiles 5/50/95) y las probabilidades de tocar objetivo vs stop.
+
+---
+
 ## 7. Riesgo y seguridad (reglas duras)
 
-**Valores por defecto (el dueño los fija en la Fase 0):**
-- Riesgo por operación: 0,5–1 % del capital asignado.
-- Pérdida máxima diaria: 3 % → el bot se para hasta el día siguiente.
-- Pérdida máxima semanal: 6 % → se para y exige revisión humana.
-- Apalancamiento máximo: 3x, margen **aislado**; el stop debe quedar lejos de la liquidación.
+**Valores por defecto (el dueño los fija en la Fase 0; los modos de §6b los ajustan dentro de estos techos):**
+- Riesgo por operación: según modo (0,5 % Escudo → tope ½ Kelly en Ataque).
+- Pérdida máxima diaria: 3 % del capital base / 30 % del capital de ataque → se para hasta el día siguiente y pasa a Escudo.
+- Pérdida máxima semanal: 6 % del capital base / 100 % del de ataque → se para y exige revisión humana.
+- Apalancamiento máximo: según modo, margen **aislado** siempre; el stop debe quedar lejos de la liquidación (validado antes de cada orden).
 - Máximo de posiciones simultáneas y de exposición correlacionada (p. ej., no 3 largos de altcoins correlacionadas).
 - Stop-loss **siempre colocado en el exchange** en el mismo momento que la entrada.
 
@@ -250,7 +309,7 @@ Cada fase termina con: tests en verde, demostración en vivo, y tu aprobación p
 ## 10. Preguntas abiertas para el dueño (necesarias antes de la Fase 0)
 1. **Autonomía final:** ¿hasta qué nivel quieres llegar (L2 copiloto o L3 automático)?
 2. **Mercado:** ¿spot, futuros perpetuos o ambos? ¿Apalancamiento máximo que aceptas?
-3. **Capital:** ¿cuánto asignarás al bot al principio y cuánto como máximo?
+3. **Capital:** ¿confirmas 500 $ iniciales? ¿Qué reparto base/ataque (propuesta 70/30)? ¿Cuánto aceptas perder entero antes de parar todo?
 4. **Pares:** ¿BTC/ETH solamente, top 20, o también altcoins pequeñas?
 5. **Estilo y temporalidad:** ¿scalping (minutos), intradía (horas) o swing (días)?
 6. **TradingView:** ¿qué plan tienes? ¿Tienes ya indicadores o estrategias Pine propias que quieras integrar?
