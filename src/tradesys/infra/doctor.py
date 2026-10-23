@@ -8,6 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from keyring.errors import KeyringError
+
 from tradesys.config.risk import load_risk_config
 from tradesys.infra.secrets import get_secret
 
@@ -43,16 +45,16 @@ def run_checks(
     except Exception as e:  # noqa: BLE001 - se informa cualquier fallo de carga
         results.append(CheckResult("config", False, f"config/risk.yaml no carga: {e}"))
 
-    missing = [n for n in REQUIRED_SECRETS if not get_secret(n)]
-    results.append(
-        CheckResult(
-            "secretos",
-            not missing,
+    try:
+        missing = [n for n in REQUIRED_SECRETS if not get_secret(n)]
+        detail = (
             "claves de MEXC en el Llavero"
             if not missing
-            else "; ".join(f"falta {n}" for n in missing),
+            else "; ".join(f"falta {n}" for n in missing)
         )
-    )
+        results.append(CheckResult("secretos", not missing, detail))
+    except KeyringError as e:
+        results.append(CheckResult("secretos", False, f"Llavero no disponible: {e}"))
 
     if not offline:
         fetch = server_time_ms or mexc_server_time_ms

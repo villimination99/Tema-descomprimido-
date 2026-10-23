@@ -54,3 +54,15 @@ import pytest  # noqa: E402
 def test_real_mexc_clock():
     res = by_name(run_checks(offline=False))
     assert res["reloj"].ok, res["reloj"].detail
+
+
+def test_no_keyring_backend_is_reported_not_crash(monkeypatch):
+    import keyring.errors
+
+    def no_backend(*_a, **_k):
+        raise keyring.errors.NoKeyringError("sin llavero")
+
+    monkeypatch.setattr("keyring.get_password", no_backend)
+    res = by_name(run_checks(offline=True))
+    assert not res["secretos"].ok
+    assert "Llavero no disponible" in res["secretos"].detail
