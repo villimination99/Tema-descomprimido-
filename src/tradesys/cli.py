@@ -49,3 +49,41 @@ def doctor(offline: bool = typer.Option(False, "--offline", help="Sin consultas 
         typer.echo(f"{'OK ' if r.ok else 'MAL'}  {r.name:<9} {r.detail}")
     if not all(r.ok for r in results):
         raise typer.Exit(1)
+
+
+mexc_app = typer.Typer(help="Herramientas de MEXC.", no_args_is_help=True)
+app.add_typer(mexc_app, name="mexc")
+
+
+@mexc_app.command("probe")
+def mexc_probe(
+    private: bool = typer.Option(False, "--private", help="Usa tus claves (solo lectura)."),
+    order: str | None = typer.Option(
+        None, "--order", help="spot o swap: crea y cancela una orden mínima de prueba."
+    ),
+) -> None:
+    """Comprueba qué permite de verdad tu cuenta de MEXC y guarda reports/mexc_capabilities.json."""
+    from pathlib import Path
+
+    from tradesys.exchange.probe import (
+        make_exchange,
+        probe_order,
+        probe_private,
+        probe_public,
+        write_report,
+    )
+
+    report: dict = {}
+    for market in ("spot", "swap"):
+        ex = make_exchange(market, auth=private or order is not None)
+        report[market] = {"public": probe_public(ex)}
+        if private:
+            report[market]["private"] = probe_private(ex)
+        if order == market:
+            symbol = "BTC/USDT" if market == "spot" else "BTC/USDT:USDT"
+            typer.echo(f"Se creará y cancelará una orden mínima post-only en {symbol}.")
+            confirm = typer.prompt("Escribe SI (en mayúsculas) para continuar")
+            report[market]["order_test"] = probe_order(ex, symbol, confirm)
+    path = Path("reports/mexc_capabilities.json")
+    write_report(report, path)
+    typer.echo(f"Informe guardado en {path}")
