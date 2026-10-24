@@ -197,6 +197,25 @@ td .id{font:700 .9rem var(--f-mono);color:var(--gold)}
 .tcard b{font:700 2rem/1 var(--f-mono)}
 .tcard small{color:var(--muted)}
 
+/* ---------- learning ---------- */
+.learn{display:grid;grid-template-columns:.9fr 1.1fr;gap:16px}
+.loop-panel{place-items:center}
+.loop{width:100%;max-width:380px;height:auto}
+.loop .spin{transform-origin:210px 210px;animation:spin 9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loop-c1{font:800 22px var(--f-display);font-stretch:80%;fill:var(--fg)}
+.loop-c2{font:500 12px var(--f-mono);fill:var(--muted)}
+.loop .node rect{fill:var(--panel-2);stroke:var(--line)}
+.loop .node text{font:600 12.5px var(--f-mono);fill:var(--fg)}
+.loop .node .i{fill:var(--gold);font-size:11px}
+.levels{display:grid;gap:10px}
+.lv{display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.lv-k{font:800 1.6rem/1 var(--f-display);color:var(--gold);text-align:center;border:1px solid var(--line);border-radius:8px;padding:8px 0}
+.lv h3 small{font:500 .7rem var(--f-mono);color:var(--muted);margin-left:6px;letter-spacing:.04em}
+.lv p{font-size:.88rem;color:var(--muted);margin-top:4px}
+#calib{width:100%;height:auto;max-width:100%}
+@media (max-width:900px){.learn{grid-template-columns:1fr}}
+
 footer{color:var(--faint);font-size:.8rem;display:grid;gap:6px;border-top:1px solid var(--line);padding-top:18px}
 
 @media (max-width:900px){
@@ -405,6 +424,37 @@ footer{color:var(--faint);font-size:.8rem;display:grid;gap:6px;border-top:1px so
       <div class="tcard"><small>Ventaja excepcional · 55 % · 2,5R</small><b style="color:var(--gain)">96 %</b><small>2 % de riesgo de perder la mitad</small></div>
       <div class="tcard"><small>Ventaja buena · 50 % · 2R</small><b style="color:var(--warn)">56 %</b><small>11 % de riesgo de perder la mitad</small></div>
       <div class="tcard"><small>Ventaja realista · 45 % · 1,5R</small><b style="color:var(--loss)">8 %</b><small>44 % de riesgo de perder la mitad</small></div>
+    </div>
+  </section>
+
+  <!-- LEARNING -->
+  <section aria-labelledby="t-learn">
+    <div class="head">
+      <span class="eyebrow">Aprendizaje continuo</span>
+      <h2 id="t-learn">Cada análisis es una predicción. Cada resultado la corrige.</h2>
+      <p class="muted">El sistema puntúa todo lo que afirma: régimen, escenarios, probabilidades, slippage. Ajusta lo que falla, prueba cada mejora en sombra antes de usarla y nunca toca los límites de riesgo por su cuenta.</p>
+    </div>
+    <div class="learn">
+      <div class="panel loop-panel">
+        <svg class="loop" viewBox="0 0 420 420" role="img" aria-label="Bucle: predecir, operar, medir, calibrar, probar en sombra, promover">
+          <circle cx="210" cy="210" r="150" fill="none" stroke="var(--line)" stroke-width="2"></circle>
+          <circle class="spin" cx="210" cy="210" r="150" fill="none" stroke="var(--gold)" stroke-width="3" stroke-dasharray="60 882" stroke-linecap="round"></circle>
+          <g id="loopNodes"></g>
+          <text x="210" y="200" text-anchor="middle" class="loop-c1">el diario</text>
+          <text x="210" y="226" text-anchor="middle" class="loop-c2">memoria inmutable</text>
+        </svg>
+      </div>
+      <div class="levels">
+        <article class="lv"><span class="lv-k">A</span><div><h3>Recuento <small>cada operación</small></h3><p>Acierto y relación ganancia/pérdida de cada estrategia. Con pocas operaciones el tope de riesgo baja solo.</p></div></article>
+        <article class="lv"><span class="lv-k">B</span><div><h3>Calibración <small>cada día</small></h3><p>Pesos de los escenarios, probabilidades, slippage y tiempos de las órdenes maker. Mínimo 30 datos y cambios limitados.</p></div></article>
+        <article class="lv"><span class="lv-k">C</span><div><h3>Asignación <small>cada semana</small></h3><p>Qué estrategia manda en cada régimen y sesión, solo entre las ya probadas.</p></div></article>
+        <article class="lv"><span class="lv-k">D</span><div><h3>Descubrimiento <small>tú apruebas</small></h3><p>Patrones nuevos del diario y filtros de machine learning. Todo entra por G0 y recorre el embudo entero.</p></div></article>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="verdict"><h3>¿Dice la verdad? Calibración de P(objetivo antes que stop)</h3><span class="demo-tag">ejemplo simulado</span></div>
+      <svg id="calib" viewBox="0 0 640 300" role="img" aria-label="Diagrama de fiabilidad antes y después de recalibrar"></svg>
+      <p class="muted" style="font-size:.85rem">Si el modelo dice 60 %, debería ocurrir alrededor del 60 % de las veces. La línea discontinua es el modelo sin calibrar (demasiado optimista); la continua, tras la recalibración diaria.</p>
     </div>
   </section>
 
@@ -707,6 +757,41 @@ footer{color:var(--faint);font-size:.8rem;display:grid;gap:6px;border-top:1px so
     try { localStorage.setItem('sala-checklist', JSON.stringify(done)); } catch(e) {}
   }
   cl.addEventListener('change', prog); prog();
+
+  // ---------- learning loop ----------
+  const LOOP = ['Predecir','Operar','Medir','Calibrar','Probar en sombra','Promover'];
+  const ng = document.getElementById('loopNodes'), NS = 'http://www.w3.org/2000/svg';
+  LOOP.forEach((t,i) => {
+    const a = -Math.PI/2 + i*2*Math.PI/LOOP.length, x = 210 + 150*Math.cos(a), y = 210 + 150*Math.sin(a);
+    const g = document.createElementNS(NS,'g'); g.setAttribute('class','node');
+    const w = t.length*8 + 30;
+    g.innerHTML = `<rect x="${x-w/2}" y="${y-16}" width="${w}" height="32" rx="16"></rect><text class="i" x="${x-w/2+12}" y="${y+4}">${i+1}</text><text x="${x-w/2+24}" y="${y+4}">${t}</text>`;
+    ng.appendChild(g);
+  });
+
+  // ---------- calibration chart (illustrative) ----------
+  (function calib(){
+    const svg = document.getElementById('calib'), W = 640, H = 300, p = {l:46,r:16,t:14,b:36};
+    const X = v => p.l + (W-p.l-p.r)*v, Y = v => H-p.b - (H-p.t-p.b)*v;
+    const bins = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9];
+    const raw = bins.map(b => Math.max(0.02, b - 0.13*Math.sin(Math.PI*b) - 0.04));
+    const cal = bins.map((b,i) => b + [0.02,-0.01,0.015,-0.02,0.01,-0.015,0.02,-0.01,0.005][i]);
+    let h = '';
+    for(let v=0; v<=1.0001; v+=0.2){
+      h += `<line x1="${X(0)}" x2="${X(1)}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/>`;
+      h += `<text x="${p.l-8}" y="${Y(v)+4}" text-anchor="end" font-size="11" font-family="JetBrains Mono, monospace" fill="var(--faint)">${Math.round(v*100)}%</text>`;
+      h += `<text x="${X(v)}" y="${H-p.b+18}" text-anchor="middle" font-size="11" font-family="JetBrains Mono, monospace" fill="var(--faint)">${Math.round(v*100)}%</text>`;
+    }
+    h += `<line x1="${X(0)}" y1="${Y(0)}" x2="${X(1)}" y2="${Y(1)}" stroke="var(--faint)" stroke-dasharray="2 4"/>`;
+    const path = arr => arr.map((v,i)=>`${i?'L':'M'}${X(bins[i])},${Y(v)}`).join(' ');
+    h += `<path d="${path(raw)}" fill="none" stroke="var(--loss)" stroke-width="2" stroke-dasharray="7 5"/>`;
+    h += `<path d="${path(cal)}" fill="none" stroke="var(--gain)" stroke-width="2.5"/>`;
+    cal.forEach((v,i)=> h += `<circle cx="${X(bins[i])}" cy="${Y(v)}" r="4" fill="var(--gain)"/>`);
+    h += `<text x="${X(0.5)}" y="${H-4}" text-anchor="middle" font-size="11" font-family="JetBrains Mono, monospace" fill="var(--muted)">probabilidad prevista</text>`;
+    h += `<text x="${X(0.02)}" y="${Y(0.93)}" font-size="12" font-family="JetBrains Mono, monospace" fill="var(--gain)">tras calibrar</text>`;
+    h += `<text x="${X(0.62)}" y="${Y(0.38)}" font-size="12" font-family="JetBrains Mono, monospace" fill="var(--loss)">sin calibrar</text>`;
+    svg.innerHTML = h;
+  })();
 
   // redraw canvases on theme change
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { runWar(warSeed); });

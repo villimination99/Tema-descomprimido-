@@ -328,6 +328,82 @@ Se detalla en §10. Tiene adaptadores `PaperBroker` (simulado con datos en vivo)
 - **Informe semanal:** PnL por estrategia, modo, régimen y sesión; vivo frente a simulado (¿dentro del intervalo?); coste de comisiones y slippage; las 3 mejores y las 3 peores operaciones con su gráfico; recomendaciones (bajar una estrategia a papel, etc.).
 - **Degradación automática:** si una estrategia en vivo queda fuera del percentil 5 de su simulación durante 2 semanas, vuelve a G6 (papel).
 
+### Dept. 11 — Aprendizaje continuo ("el sistema que aprende")
+**Requisito del dueño:** todo debe aprender, de operación en operación y de análisis en análisis.
+
+**Principio:** cada cosa que el sistema afirma es una **predicción con fecha de verificación**, y cada resultado vuelve como **dato que ajusta la siguiente predicción**. Esto vale para el régimen que dice el Dept. 2, el escenario que prevé el 5b, la probabilidad de objetivo de la Simulación, el slippage que espera Ejecución y el veredicto de Riesgo.
+
+**Regla de oro:** el aprendizaje **nunca** cambia los límites de riesgo. Suelo, disyuntores, techos de modo y apalancamiento máximo solo los cambia el dueño. Aprender puede hacer el sistema más preciso y más prudente, nunca más arriesgado por sí solo.
+
+#### 11.1 Memoria: todo queda registrado con su contexto
+- **Ficha de operación:**
+  - **Contexto de entrada:** foto completa al entrar (features, régimen, alineación, contexto, escenario previsto con sus probabilidades, política de salida elegida y versión de cada modelo).
+  - **Ejecución:** ejecuciones reales y slippage frente al modelado.
+  - **Recorrido:** MFE/MAE, escenario ocurrido y resultado en R.
+  - **Autopsia automática:** qué funcionó y qué falló.
+- **Ficha de análisis:** cada régimen detectado, cada setup propuesto **y cada setup rechazado** por Riesgo, con su motivo.
+- **Contrafactuales:**
+  - los setups bloqueados o no ejecutados se siguen en papel para saber qué habría pasado;
+  - las salidas se comparan con la mejor y la peor política posibles sobre el camino real.
+
+  Así se aprende si la puerta es demasiado estricta o demasiado laxa.
+- **Inmutable y versionado:** el diario es append-only y cada registro guarda el hash de git y la versión de cada modelo. Siempre se puede reproducir por qué se decidió algo.
+
+#### 11.2 Marcadores: cada departamento tiene su tabla de aciertos
+| Qué se predice | Cómo se puntúa | Quién aprende |
+|---|---|---|
+| Régimen (Dept. 2) | Acierto del régimen frente a lo que hizo el precio en las N velas siguientes | Umbrales del clasificador |
+| Escenarios (Dept. 5b) | Brier score y log-loss de las 6 probabilidades; matriz de confusión previsto/ocurrido | Pesos de los 4 generadores |
+| P(objetivo antes que stop) (Dept. 5) | Calibración (diagrama de fiabilidad): si dice 60 %, ¿ocurre ~60 %? | Recalibración isotónica |
+| Slippage y ejecución maker (Dept. 7) | Error frente al modelo, por par, hora y tamaño | Modelo de costes y tiempos de re-cotización |
+| Setups (Dept. 4) | Expectativa en R por estrategia × régimen × sesión | Asignación entre estrategias |
+| Veredictos (Dept. 6) | Resultado de los PASS frente a los contrafactuales de los BLOCK | Informe al dueño (Riesgo no se auto-ajusta) |
+
+#### 11.3 Cuatro niveles de aprendizaje, del más rápido y seguro al más lento y estructural
+| Nivel | Frecuencia | Qué ajusta | Automático | Salvaguarda |
+|---|---|---|---|---|
+| **A. Recuento** | Cada operación | Entradas de Kelly (`p_low`, `b_low`), estadísticas de la estrategia, rachas | Sí | Son estimaciones pesimistas: con pocas operaciones el tope de riesgo baja solo |
+| **B. Calibración** | Diaria | Pesos de los generadores de escenarios, recalibración de probabilidades, modelo de slippage, tiempos maker | Sí, dentro de rangos | Mínimo 30 observaciones; contracción hacia el valor anterior (*shrinkage*); cambio máximo por semana; cada versión se guarda y se puede revertir |
+| **C. Asignación** | Semanal | Qué estrategia tiene prioridad en cada régimen y sesión (muestreo de Thompson entre estrategias en G7 o más) | Sí, solo para elegir entre setups | No cambia el riesgo por operación ni salta el embudo; una estrategia degradada sale de la asignación |
+| **D. Descubrimiento** | Semanal y mensual | Nuevas hipótesis y filtros: patrones en el diario (p. ej. "las pérdidas se concentran con funding > p95 en la sesión de Asia"), meta-etiquetado (un clasificador que decide si tomar un setup) | **No**: propone el agente investigador y aprueba el dueño | Toda hipótesis entra por G0 y recorre el embudo completo; un filtro de ML se valida como una estrategia más (walk-forward purgado, PBO) |
+
+#### 11.4 Cómo se evita aprender ruido (anti-sobreajuste)
+- **Solo walk-forward:** ningún ajuste usa datos que no habría tenido en su momento. Validación cruzada purgada con embargo para modelos de ML.
+- **Mínimos de muestra:** ningún parámetro se mueve con menos de 30 observaciones nuevas.
+- **Presupuesto de cambio:** cada parámetro aprendido tiene un rango permitido en `config/learning.yaml` y un cambio máximo por semana.
+- **Campeón contra aspirante:**
+  - toda versión nueva de un modelo corre primero en **sombra**, con las mismas señales y sin dinero;
+  - solo sustituye a la actual si mejora su marcador con significación estadística durante ≥ 2 semanas;
+  - si después empeora en vivo, **vuelve sola** a la versión anterior.
+- **Olvido controlado:** pesos con decaimiento exponencial (vida media configurable, p. ej. 90 días), para adaptarse a cambios de mercado sin olvidar regímenes raros. Los eventos extremos se conservan siempre en un conjunto de estrés.
+- **Detección de deriva:** si la distribución de features o de resultados cambia de forma significativa (PSI o test KS), se avisa y el sistema baja a Escudo hasta revisión.
+
+#### 11.5 El libro de lecciones (memoria que leen los agentes)
+- Cada semana, el agente **auditor** redacta en español las lecciones del diario: qué setups fallaron y por qué, qué escenario se previó mal, qué hora o par cuesta más slippage.
+- Cada lección se guarda en `knowledge/lecciones/` con su **evidencia** (consulta reproducible al diario) y un estado:
+  - `hipótesis`: aún no verificada;
+  - `confirmada`: verificada en datos fuera de muestra;
+  - `descartada`.
+- Los agentes de Claude leen las lecciones **confirmadas** antes de cada `/briefing` y `/analizar`, y las citan al explicar una decisión.
+- Una lección **solo se convierte en regla de código** tras pasar el embudo como cualquier hipótesis.
+
+#### 11.6 Ritmo del bucle
+| Cuándo | Qué pasa |
+|---|---|
+| Al cerrar cada operación | Ficha completa + autopsia + recuento (nivel A) + actualización del marcador |
+| Cada vela cerrada | Las predicciones vencidas se puntúan (régimen, escenarios) |
+| Cada día, 00:05 UTC | Calibración (nivel B) en sombra; las versiones que ganan se promueven con registro |
+| Cada domingo | Informe semanal + asignación (nivel C) + lecciones (11.5) + propuestas de hipótesis (nivel D) para el dueño |
+| Cada mes | Recalibración del régimen, reentrenamiento walk-forward del meta-etiquetado, detección de deriva |
+| Cada trimestre | Revisión del embudo: ¿los umbrales G1–G8 separaron bien las estrategias buenas de las malas? |
+
+#### 11.7 Panel de aprendizaje (en la Sala de Mando)
+- Curva de calibración de cada predictor.
+- Marcador por departamento.
+- Campeón frente a aspirante con su estado.
+- Lecciones de la semana.
+- Contrafactuales: qué habría pasado con los BLOCK.
+
 ---
 
 ## 7. Contratos de datos (resumen)
@@ -348,6 +424,12 @@ RiskDecision{setup_id, verdict: PASS|BLOCK, reasons[], mode, risk_usdt, qty, lev
 ScenarioRep {position_id, ts, n_paths, scenarios[{name, prob, mfe_R, mae_R, eta}], exp_R,
              chosen_exit_policy, generator_weights}
 ManageAction{position_id, action: move_stop|partial|close|add, params, reason, scenario}
+Prediction  {pred_id, dept, kind: regime|scenario|p_target|slippage|setup, made_at, due_at,
+             payload, model_version, git_hash}
+Outcome     {pred_id, resolved_at, actual, score{brier?, logloss?, hit?, error?}}
+TradeCard   {position_id, context_snapshot, prediction_ids[], fills[], mfe_R, mae_R, result_R,
+             scenario_happened, exit_policy, counterfactual_R{best, worst, no_trade}, autopsy}
+Lesson      {lesson_id, text_es, evidence_query, status: hipotesis|confirmada|descartada, created_at}
 Order       {client_order_id, ticket_hash, symbol, side, type, price, qty, reduce_only, post_only}
 Fill        {client_order_id, exch_order_id, ts, price, qty, fee, fee_asset}
 ```

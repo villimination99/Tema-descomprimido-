@@ -54,7 +54,9 @@ El spec cubre varios subsistemas independientes. Por eso hay **un plan detallado
 9. ⇄ Pine Script v6: `TS-Regime`, `TS-Structure`.
 10. Prototipo de panel (Lightweight Charts frente a Streamlit) y elección.
 
-**Aceptación:** criterios del Dept. 1, 2 y 9 del spec.
+11. **Aprendizaje (Dept. 11):** registro de `Prediction`/`Outcome` y puntuación automática del régimen en cada vela cerrada (primer marcador).
+
+**Aceptación:** criterios del Dept. 1, 2 y 9 del spec; el marcador de régimen funciona con datos reales.
 
 ## F2 — Laboratorio
 1. Bus de eventos + motor de backtest event-driven (mismo código que en vivo).
@@ -67,6 +69,11 @@ El spec cubre varios subsistemas independientes. Por eso hay **un plan detallado
 8. **Motor de escenarios (Dept. 5b):** análogos k-NN, bootstrap por bloques, modelo con saltos, escenarios de evento, 6 escenarios canónicos.
 9. Selector de política de salida, validado frente a la política fija.
 10. Informes de embudo G0–G5 por estrategia.
+11. **Aprendizaje:**
+    - esquema `TradeCard` y contrafactuales en el backtest;
+    - calibración de probabilidades y pesos de generadores (nivel B) evaluados en walk-forward;
+    - `config/learning.yaml` con rangos y presupuestos de cambio;
+    - primer prototipo de meta-etiquetado (nivel D, como estrategia candidata).
 
 **Aceptación:** fichas S1–S6 con veredicto. Si ninguna pasa G5, se itera y **no se avanza**.
 
@@ -78,6 +85,12 @@ El spec cubre varios subsistemas independientes. Por eso hay **un plan detallado
 5. Diario append-only + informes diario y semanal.
 6. Servicios `launchd` + `pmset`.
 7. Agentes y skills de Claude por departamento (`/briefing`, `/analizar`, `/simular`, `/operar`, `/kill`, …).
+8. **Bucle de aprendizaje completo en papel:**
+   - niveles A–C automáticos;
+   - campeón frente a aspirante en sombra;
+   - libro de lecciones semanal;
+   - detección de deriva;
+   - panel de aprendizaje en la Sala de Mando.
 
 **Aceptación:** 2–4 semanas en papel 24/7, KILL probado y G6 evaluado.
 
@@ -86,6 +99,7 @@ El spec cubre varios subsistemas independientes. Por eso hay **un plan detallado
 2. Tests de caos (desconexión, 429, ejecución parcial, reinicio con posición).
 3. VPS con IP fija + `systemd` + API de control + secretos cifrados.
 4. Confirmación L2 por ticket desde Telegram.
+5. **Aprendizaje en vivo:** modelo de slippage real por par y hora; sombra permanente vivo frente a papel; reversión automática de modelos.
 
 **Aceptación:** ≥ 30 operaciones reales con tamaño mínimo, cero posiciones sin stop y G7 evaluado.
 
@@ -94,5 +108,6 @@ El spec cubre varios subsistemas independientes. Por eso hay **un plan detallado
 2. Bolsa de ganancias en una subcuenta separada (si MEXC lo permite).
 3. Ataque/Turbo con piramidación.
 4. Degradación automática de estrategias y recalibración de pesos de escenarios.
+5. **Asignación por Thompson** entre estrategias en G7 o más (nivel C) y revisión trimestral del propio embudo.
 
 **Aceptación:** 4 semanas en L3 sin violar ninguna regla dura.
